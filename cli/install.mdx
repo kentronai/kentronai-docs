@@ -1,0 +1,72 @@
+---
+title: "Install the CLI"
+description: "Install the released receipt binary, and supply the gateway host it needs before the first sign-in."
+---
+
+The released `receipt` CLI is a single compiled binary. Install it with the script below, then tell it which Receipt host to talk to — that second step is not optional, and skipping it is the most common reason a first `receipt setup` fails.
+
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/skishore23/receipt-cli/main/install.sh | bash
+export PATH="$HOME/.local/bin:$PATH"
+receipt --version
+```
+
+The `export` line is only needed if the install directory is not already on your `PATH`; the installer tells you when that is the case, printing `Add ~/.local/bin to PATH to run 'receipt' from any shell.` after `Installed receipt CLI at …`. Add it to your shell profile to make it stick.
+
+<Note>
+This distribution location may change. If the URL above does not resolve, get the current one from whoever operates your Receipt deployment rather than guessing at a replacement.
+</Note>
+
+## What the installer does
+
+- Requires `curl`, `tar`, and a SHA-256 utility (`shasum` or `sha256sum`).
+- Downloads the release archive for your platform along with the published `checksums.txt`, verifies the archive against its SHA-256 line, and refuses to install if that does not match.
+- Installs one executable — `receipt` — into a local bin directory, `~/.local/bin` by default.
+- Re-running it upgrades in place. Your session directory, `~/.receipt`, is left untouched, so an upgrade does not sign you out.
+
+Environment variables the installer reads: `RECEIPT_CLI_VERSION` pins a specific release tag instead of the default the script carries, `RECEIPT_CLI_BIN_DIR` changes the install directory, `RECEIPT_CLI_BIN` sets the exact destination path, and `RECEIPT_CLI_REPO` points at a different release repository. The script reads them from the environment of the shell that runs it, so in a piped install the assignment goes on `bash`, not on `curl`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/skishore23/receipt-cli/main/install.sh | RECEIPT_CLI_VERSION=<release-tag> bash
+```
+
+## Supported platforms
+
+macOS and Linux, on arm64 and x64. Anything else stops with `Unsupported OS` or `Unsupported architecture`.
+
+There is no Windows build, and no npm or Homebrew distribution — the installer script above is the only channel documented here. A package named `receipt` on any package registry is not this CLI.
+
+<Note>
+The installer does not install the Claude observer companion binary, even when a release archive bundles one. That is why `receipt setup` can report the observer as not installed on a freshly installed CLI — see [Observing Claude Code](/cli/observe-claude-code).
+</Note>
+
+## Point the CLI at your Receipt host
+
+<Warning>
+The released binary has no gateway URL compiled into it. On a fresh machine with no environment set, a plain `receipt setup` fails with:
+
+`receipt connect production URL is not configured yet. Set RECEIPT_CONNECT_PUBLIC_GATEWAY_URL, RECEIPT_CONNECT_PROD_GATEWAY_URL, RECEIPT_CONNECT_PROD_URL, or RECEIPT_CONNECT_URL.`
+
+The binary's own help text says the default endpoint "Uses the hosted Receipt gateway". It does not — there is no hosted default in the binary, and the host has to come from you.
+</Warning>
+
+Supply it either as an environment variable, which every later command in that shell inherits:
+
+```bash
+export RECEIPT_CONNECT_PUBLIC_GATEWAY_URL=https://<your-receipt-host>
+receipt setup
+```
+
+or as a flag on the command itself:
+
+```bash
+receipt setup --server-url https://<your-receipt-host>
+```
+
+The two are not identical. The environment-variable form produces a `prod` session; `--server-url` produces a `custom` session, which writes no per-target session file. [Signing in](/cli/setup) covers what that difference means for the files on disk.
+
+Whichever form you use, the host you give must serve both halves of the flow: the web application path `/api/receipt-connect/cli-login`, where you approve the sign-in in a browser, and the gateway path `/connect/*`, where every later command sends its requests. When the host you supplied is not serving the web application, sign-in never gets started and the CLI reports `receipt connect device login failed to start: http_404` — ask whoever operates your deployment which host fronts both paths, or point the login half somewhere else with `--auth-url`.
+
+Next step: [sign in with receipt setup](/cli/setup).

@@ -1,0 +1,28 @@
+---
+title: "Read the receipts"
+description: "Open Replay to audit exactly what a background run did, step by step."
+---
+
+Every run leaves a trail you can inspect. The **Replay** pill sits top-right of the chat page — it's disabled until a thread or objective exists to inspect. Opening it shows a dialog whose eyebrow reads **Agent replay**.
+
+## The three tabs
+
+- **Summary** — an on-demand recap you generate rather than one that's always ready. It has distinct ready, unavailable, and failed states, so a missing provider key reads differently from a recap that simply failed to generate. Alongside it sit token and action counters for the run.
+- **Transcript** — the conversation, rebuilt from projected session messages. It's reconstructed rather than stored verbatim, because the underlying receipt stream never records your literal chat text.
+- **Work** — the concrete items behind the answer, each typed as a command, tool, connector, or evidence, carrying its own status and filterable by chip.
+
+## The six stages
+
+Every run is organized into the same six stages, in order: **Goal**, **Plan**, **Work**, **Tools & Commands**, **Evidence**, and **Result**.
+
+## Inspecting one receipt
+
+Selecting any item opens the receipt inspector, showing its **Status**, **Recorded** time, **Agent**, **Source step**, **Receipt category**, and **Source receipts**. From there you can use **Copy receipt** to copy the raw record, or **Replay to this step** to see the run's state as of that point.
+
+## Searching and cost
+
+The receipt search box searches by hash or payload, and you can narrow it with filters for **Problems**, **State changes**, **Evidence**, **Commands**, **Jobs**, **Memory**, and **Computer**.
+
+The cost row is labelled **Estimated provider cost**. When nothing was recorded, it reads `Not recorded` rather than showing a zero — so you can always tell an untracked cost apart from a genuinely free run.
+
+Next step: [see how organizations and workspaces fit together](/platform/organizations-and-workspaces).

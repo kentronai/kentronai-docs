@@ -1,0 +1,203 @@
+---
+title: "Testing, simulation, and stack validation"
+description: "What each check command really covers, what the fast check leaves out, and how to turn a non-deterministic failure into a permanent regression case."
+---
+
+## The check pyramid
+
+Every command here is run through the toolchain wrapper, `./bunw`.
+
+| Command | What it runs |
+|---|---|
+| `./bunw run lint` | ESLint over `apps/start` with `--max-warnings=0`, plus a `tsc --noEmit` typecheck of the Teams adapter. `packages/ui`, `packages/utils` and `apps/slack` define no `lint` script. |
+| `./bunw run check` | An alias for `check:fast`. |
+| `./bunw run check:fast` | `lint` → `sst:config:test` → the `apps/start` typecheck → the `apps/teams` tests → `receipt:check`. |
+| `./bunw run check:full` | `check:fast`, then the builds — `build:web` and `build:receipt`. |
+| `./bunw run receipt:check` | `receipt:check-types` → `receipt:test` → `receipt:simulate:repeat`. |
+| `./bunw run receipt:check-types` | `tsc --noEmit` in five packages: `receipt-core`, `receipt-durable`, `receipt-live`, `receipt-dst` and `receipt-app`. |
+| `./bunw run receipt:test` | `bun test ./src` in those same five packages. |
+| `./bunw run sst:config:test` | 17 explicitly named Bun test files under `deploy/sst/`, `scripts/` and `tests/smoke/validate-stack.test.ts` — the deployment and configuration contract suite. |
+| `./bunw run --cwd apps/start test` | Vitest over `src/**/*.test.ts(x)`. A `pretest` hook recompiles i18n first. |
+| `./bunw run --cwd apps/start check-types` | `tsc --noEmit` for the web application. |
+| `./bunw run receipt:test:smoke` | `bun run build`, then `bun test ./tests/smoke --max-concurrency=1 --timeout=$RECEIPT_SMOKE_TIMEOUT_MS`, then the mock-LLM proxy integration test in a fresh process. There are 64 files in `tests/smoke`. |
+| `./bunw run receipt:test:perf` | `tests/perf/stream-100k.test.ts`, which replays 100 000 receipts through the Postgres store. It skips itself unless `RECEIPT_TEST_POSTGRES_URL` or `ZERO_UPSTREAM_DB` is set. |
+| `./bunw run validate:stack` | The whole-stack harness — see below. |
+
+## What the fast check does not cover
+
+<Warning>
+**`check:fast` does not run the web application's test suite, the smoke suite, or the performance suite.** It only typechecks `apps/start`. `tests/smoke` and `tests/perf` are separate commands you have to run yourself.
+</Warning>
+
+There is a second trap. `bunfig.toml` sets `[test] root = "tests"`, so a bare `bun test` at the repository root runs **only** the repo-level suites under `tests/` — not the workspace unit tests. Use the workspace-scoped scripts (`receipt:test`, `--cwd apps/start test`) rather than a bare invocation.
+
+## What continuous integration runs on a pull request
+
+The CI workflow triggers on every pull request and on pushes to the default branch, running a single `Verify` job on `ubuntu-latest` with a 45-minute job timeout and a concurrency group that cancels superseded runs. It provides a `postgres:17` service container with a `pg_isready` healthcheck. Local compose uses `postgres:16-alpine`, so there is a version skew between the two.
+
+The steps, in order:
+
+<Steps>
+  <Step title="Check out and pin the toolchain">
+    Checkout, then Bun pinned to `1.3.12`, then Node read from `.node-version`.
+  </Step>
+  <Step title="Restore caches and install">
+    Cache the Bun install cache keyed on `bun.lock` and the Turbo cache, then `bun install --frozen-lockfile`.
+  </Step>
+  <Step title="Verify the toolchain and compile i18n">
+    `bun run toolchain:check`, then `bun run --cwd apps/start i18n:compile`.
+  </Step>
+  <Step title="Run the fast check">
+    `bun run check:fast`, with a 15-minute step timeout.
+  </Step>
+</Steps>
+
+So a pull request is gated on lint, `sst:config:test`, the `apps/start` typecheck, the `apps/teams` tests, and the whole `receipt:check` chain — types, unit tests and the repeat simulation. **CI runs nothing else.** It does not run the web application's Vitest suite, `tests/smoke`, `tests/perf` or `validate:stack`.
+
+The deploy workflow runs only after a successful CI run on the default branch, or on a manual dispatch. It is not part of pull-request validation.
+
+## Deterministic simulation
+
+The `@receipt/dst` package supplies the primitives that make a simulated run reproducible. It exports `.` and `./simulation`.
+
+| Export | What it does |
+|---|---|
+| `createSimulationVirtualClock(seed)` | A virtual clock with `now()` and `tick(ms?)` |
+| `withSimulationDateNow(...)` | Patches the ambient `Date.now` for one scope |
+| `createDeterministicSimulationRandom(...)` | A seeded PRNG |
+| `createDeterministicSimulationEntropy({...})` | A labelled, domain-separated, replayable entropy tape with `float`, `int` and `choice` draws |
+| `createDeterministicSimulationIdSource(...)` | Deterministic queue, job, command and event ids |
+| `withDeterministicSimulationEnvironment(...)` | Patches `Date.now`, `Math.random` and optionally timers for one scope |
+| `traceSimulationEvent(...)` | Appends a trace event |
+| `createDeterministicSimulationScheduler({...})` | Turns `setTimeout` and `setInterval` into ordered simulation steps |
+| `createInMemorySimulationReceiptStore<B>()` | An in-memory receipt store |
+| `createInMemorySimulationBranchStore()` | An in-memory branch store |
+| `DEFAULT_DETERMINISTIC_SIMULATION_MAX_STEPS` | The default step limit, `10 000` |
+
+Ordering of steps scheduled for the same instant is configurable: `"fifo"`, `"lifo"`, `"actor"`, `"label"`, or `{ kind: "seeded", seed }`.
+
+Three typed failures make non-determinism legible rather than intermittent:
+
+| Failure | Code | Message |
+|---|---|---|
+| `DeterministicSimulationSchedulerLimitError` | `deterministic_simulation_step_limit_exceeded` | `Deterministic simulation scheduler exceeded <n> steps with <m> pending steps. lastStep=<actor>:<label>#<seq>` |
+| `DeterministicSimulationTimerLeakError` | `deterministic_simulation_timer_leak` | `Deterministic simulation exited with <n> active timer(s): <label>:<kind>#<id>, ...` |
+| `DeterministicSimulationEnvironmentIsolationError` | `deterministic_simulation_environment_overlap` | `Deterministic simulation environments patch process globals and cannot overlap.` |
+
+Each one names the thing that went wrong — the last step executed, every timer still live at exit, or the fact that two simulation environments tried to patch process globals at once.
+
+## Running simulations
+
+```bash
+receipt factory simulate [<scenario>] [flags]
+receipt factory simulate search [flags]
+receipt factory simulate corpus <add|reduce|promote> [flags]
+```
+
+Every scenario sets the process exit code to 1 when it produces failures.
+
+**Named sub-suites:** `search`, `corpus add|reduce|promote`, `useful-gate`, `generic-agent-loop`, `projection-ui`, `prod-replay`, `deterministic-runtime`, `runtime-outbox`, `runtime-status-polling`, `projection-serving-fairness`, `funding-settlement`, `cross-channel-ingress`, `self-improvement`, `reliability-suite`.
+
+**Fixture scenarios**, used when the first argument is not one of the sub-suites: `ec2-list-happy`, `ec2-list-missing-scriptsrun`, `missing-semantic-result`, `missing-semantic-result-codex-takeover`, `missing-semantic-result-preserved-evidence`, `retry-after-useful-answer-sentinel`. Omitting the scenario runs `ec2-list-missing-scriptsrun`. Anything unrecognised is refused with `Unsupported factory simulation scenario '<x>'. Use search, useful-gate, deterministic-runtime, runtime-outbox, self-improvement, reliability-suite, or <the six fixture names>.`
+
+### Profiles and floors
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--profile default\|nightly\|incident` | `default` | Sets seeds and repeats: `default` is 25 seeds and 1 repeat, `nightly` is 100 and 2, `incident` is 250 and 2. Invalid values give `--profile must be one of: default, nightly, incident`. |
+| `--seeds <n>` | from the profile | Clamped 1–1000. |
+| `--repeat <n>` | from the profile | Clamped 1–5. |
+| `--seed <n>` | unset | The base seed, and the required argument for `corpus add`. |
+| `--corpus default\|none\|<path>` | none | `default` resolves to the checked-in search regression corpus. |
+| `--corpus-file <path>` | none | An explicit corpus file. |
+| `--corpus-only` | off | Sets seeds to 0. Requires a corpus, else `--corpus-only requires --corpus or --corpus-file`. |
+| `--coverage-floor <metric>=<value>` | built-in floors | Repeatable. The metric must be one of the built-in coverage keys; a negative or non-numeric value gives `--coverage-floor <metric>=<value> must use a non-negative number`. |
+| `--require-property <id\|all>` | none | Repeatable and comma-separated. An unknown id gives `Unknown reliability property '<x>'. Use <list>.` |
+| `--expect-coverage-digest <sha256>` | none | Mutually exclusive with `--coverage-baseline`: `use either --expect-coverage-digest or --coverage-baseline, not both`. |
+| `--coverage-baseline <artifact.json>` | none | Must contain `coverageDigest`, else `coverage baseline <path> must contain coverageDigest`. |
+| `--input <path>` | none | Production-replay receipts, a search artifact, or a reduced corpus. |
+| `--trace all\|failures\|none` | `failures` | JSON output only. It strips the `trace` and `schedulerSteps` keys unless a failure is present. Invalid values give `--trace must be one of: all, failures, none`. |
+
+### Reliability properties
+
+Eleven property identifiers can be required, individually or with `--require-property all`:
+
+```
+deterministic_environment_control      scheduler_interleaving_exploration
+fault_campaign_composition             deterministic_replay
+scheduled_fault_injection              state_space_expansion
+receipt_projection_convergence         external_system_faults
+production_receipt_replay              production_regression_adversaries
+load_redrive_pressure
+```
+
+A property that is missing or does not pass produces the failure code `simulation_search_reliability_property_not_passed` with the message `Required Factory simulation reliability property '<id>' did not pass.`
+
+### Turning a failing seed into a permanent regression case
+
+The corpus workflow is three steps, and each one refuses rather than guessing.
+
+<Steps>
+  <Step title="add">
+    `receipt factory simulate corpus add --seed <n> [--corpus-file <target>] [--reason <text>]` records the seed. A missing seed gives `factory simulate corpus add requires --seed <non-negative-number>`. The text output prints `Corpus file`, `Seed`, `Added` and `Corpus seeds`.
+  </Step>
+  <Step title="reduce">
+    `receipt factory simulate corpus reduce --input <search-artifact.json> --corpus-file <out.json> [--shrink] [--skip-verify]` minimises the failing case and verifies it still reproduces. Its refusals are `factory simulate corpus reduce requires --input <search-artifact.json>`, `factory simulate corpus reduce requires exactly one corpus target`, `factory simulate corpus reduce --shrink requires verification; remove --skip-verify`, and `reduced simulation corpus did not reproduce <caseId>; first replay failure was <caseId|none>`.
+  </Step>
+  <Step title="promote">
+    `receipt factory simulate corpus promote --input <reduced-corpus.json> [--corpus-file <target>]` makes it permanent. It refuses an unverified corpus: `factory simulate corpus promote requires a verified reduced corpus; pass --allow-unverified to override`.
+  </Step>
+</Steps>
+
+Any other corpus action is answered with `receipt factory simulate corpus supports: add, reduce, promote`.
+
+The repository wraps the common invocations as scripts: `receipt:simulate` (a `search` run against the default corpus), `receipt:simulate:corpus`, `receipt:simulate:repeat` (the one `receipt:check` runs, with `--require-property all` and a repeat of 2 by default), `receipt:simulate:nightly`, and `receipt:simulate:ui`, which starts a local simulator UI on the port named by `RECEIPT_SIMULATOR_UI_PORT`, default `4397`.
+
+## Scenario evaluation
+
+```bash
+receipt eval run <scenario-id-or-path> [--organization-id <id>] [--json] [--output-file <path>]
+receipt eval batch [<scenarioDir>] [--organization-id <id>] [--json] [--output-file <path>]
+receipt eval report [--limit <1..200>] [--json]
+receipt eval inspect <run-id> [--json]
+receipt eval replay <run-id> [--json]
+receipt eval list-scenarios [<scenarioDir>] [--json]
+```
+
+Scenarios are JSON files under the eval scenario root, with `software/` and `computer-use/` subdirectories. A scenario resolves from an absolute path, a repo-relative path, `<root>/<id>.json`, or an id matched by walking both roots. Every subcommand syncs the eval-run and computer-use-session projections before it does anything else.
+
+`report` prints a scorecard: `Receipt Eval Report`, `Runs`, `Pass rate`, `Abstraction miss rate`, `Revert rate`, `Strong handoff completeness rate`, then one line per run. `replay` runs a `receipt dst` audit scoped to that run's stream.
+
+<Note>
+**The semantic oracle is off unless you pass `--organization-id`,** and it is enabled only when that organization has an OpenAI BYOK key. Without it the evaluation still runs, but the semantic scoring does not.
+</Note>
+
+Error strings are exact: `eval subcommand is required`, `eval run requires a scenario id or path`, `eval inspect requires a run id`, `eval replay requires a run id`, `eval run '<id>' not found`, `Unknown eval subcommand '<x>'`.
+
+## The receipt-integrity gate
+
+```bash
+receipt dst [<prefix>] [--context] [--limit <n>] [--json] [--strict] [--output-file <path>]
+```
+
+`receipt dst` audits every stream on three dimensions — chain integrity, replay, and determinism — by loading each chain twice and comparing branch metadata, event-type counts and summaries. `--context` additionally audits Factory worker packets. `--limit` affects text output only.
+
+`--strict` is the gate. When any integrity, replay or determinism failure is counted, it throws after printing, so the process exits 1 with `error: DST audit found receipt issues` on stderr. That is the form to use in automation.
+
+## Whole-stack validation
+
+```bash
+./bunw run validate:stack
+```
+
+`validate:stack` runs `scripts/validate-stack.sh`, which exercises a running stack end to end rather than a package in isolation. `--help` prints its full usage block.
+
+**Prerequisites:** `bun`, `node`, `curl`, `python3`, `mktemp`, and an executable CLI wrapper — a missing one is reported as `Receipt CLI wrapper is missing at .receipt/bin/receipt`. With `VALIDATE_STACK_START=1` it additionally requires `npm`, `uvx`, at least 8 GiB of free disk, and a responsive container daemon.
+
+**What it waits on.** After loading environment files, resolving the validation auth context and resetting the validator schema — and optionally starting the full stack in the background — it waits for the web application's `/health`, the sync cache, and the runtime's `/healthz` and `/readyz`. Check `/readyz`: `/healthz` always answers 200 and reports readiness in its body, while `/readyz` returns 503 when the database does not answer.
+
+**What it records.** Artifacts land under `.deploy-artifacts/validate-stack/<runId>/`, overridable with `VALIDATE_STACK_LOG_ROOT`. The run captures `web-health.json`, `zero-cache-health.json`, `receipt-health.json`, `receipt-readiness.json`, `app-sign-in.html`, `receipt-browser.html` and `factory.html`, then seeds an isolated validation actor, runs the provider-key and integration auth preflights, and writes `receipt-doctor.json` from `receipt doctor --json`. Optional stages add a Factory objective, cloud-credential objectives and an authenticated chat smoke.
+
+**How it isolates itself.** When the validator starts the stack itself and no data directory is pinned in the environment, it uses a per-run data directory inside the run directory, a reusable Postgres schema named `receipt_validate_stack`, and its own replica file inside that data directory. The isolated replica matters: a shared replica retains DDL from earlier schema lifecycles, and the sync cache exits when it replays a `CREATE TABLE` into a replica that already has the table. The schema reset creates the schema if needed and then truncates it with `RESTART IDENTITY CASCADE`, so a validation run cannot corrupt the stack you work in. Set `VALIDATE_STACK_ISOLATED_DATA_DIR=0` to reuse your normal data directory and schema instead.
+
+Next step: [return to local development](/repo/local-development).

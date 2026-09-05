@@ -1,0 +1,124 @@
+---
+title: "Models, providers, and policy"
+description: "The provider gallery, the model catalogue, and the organization controls over both — with what each control actually enforces."
+---
+
+Every page described here sits under organization settings and is owner- and admin-only. There is no access-denied screen: if your role is anything else, Receipt silently returns you to the app root.
+
+## Two different surfaces share the models path
+
+This is the easiest thing on the platform to mis-read, so start here.
+
+- `/organization/settings/models` is the **Model Gateway provider catalog**. It is where you connect provider accounts — the tiles, the setup wizard, the credentials.
+- `/organization/settings/models/{providerId}` is **not** a detail view of a tile above it. It is the enable/disable list for one *manufacturer* in the model catalogue, and it is part of the policy system, not the account system.
+
+They share a URL prefix and nothing else. The second page's own back link — labelled **"Go back"** with the accessible label "Go back to models" — points at the first, which reinforces the illusion.
+
+## The provider gallery
+
+The page is titled **"Models"** and described as **"Connect model providers, choose workspace models, and manage organization-level access."** It has two tabs, **Models** and **Custom Endpoints**.
+
+On the Models tab you get a search box (`Search providers`) and a **Filter** toggle that, when pressed, shows only the providers that are executable. Before you have connected anything, the empty state reads **"Start adding your Models here"** / **"Configure a provider account, then choose the models available to this workspace."** Once something is connected, the layout splits into a **"Connected providers"** rail on the left and a **"{Provider} Accounts"** pane on the right, with **"Add {Provider} Account"**, **"Copy FQN"** (which copies `{providerId}/{accountName}`), **"Add model"** and **"Edit"**.
+
+The Custom Endpoints tab is headed **"Custom endpoints"** — **"Add an OpenAI-compatible or self-hosted inference endpoint and then select the models it exposes."** Its **"Add custom endpoint"** button opens the setup dialog for the Self-Hosted Model provider.
+
+### Most tiles are catalogue previews
+
+The gallery renders 32 provider tiles: AWS Bedrock, Google Vertex, Google Gemini, Azure OpenAI, Azure AI Foundry, Microsoft Foundry, OpenAI, Databricks, Cloudera, Cohere, Snowflake Cortex, OpenRouter, AI21, Anthropic, AWS Claude Platform, AWS Bedrock Mantle, DeepInfra, Groq, Mistral AI, ElevenLabs, Deepgram, Cartesia, Smallest AI, Perplexity AI, Together AI, xAI, Baseten, SambaNova, AWS SageMaker, Cerebras, Wafer, and Self-Hosted Model.
+
+Of those, exactly two are executable: **OpenAI** and **Anthropic**. Every other tile is a clickable catalogue preview — it opens, it collects fields, and then the server refuses to save it:
+
+```
+This provider is a catalog preview and cannot be configured yet.
+```
+
+You can spot a preview before you get that far. A preview tile carries the title text `Catalog preview` instead of a model count, the Authentication section of its dialog is badged **"Catalog preview"**, and its setup hint reads **"This Models account form is a catalog preview. Durable account storage and execution require a reviewed runtime adapter."** An executable provider instead shows the footer note **"Credentials are authenticated, encrypted, and stored only in the Models account."**
+
+Pressing **Filter** on the Models tab is the fastest way to see only the tiles that will actually save.
+
+## The provider setup wizard
+
+Connecting an account is three steps — **Configure account**, **Model selection**, **Access control** — followed by a success screen.
+
+<Steps>
+  <Step title="Configure account">
+    You name the account (**"Account display name"**, badged **"Models account"**, with the helper **"This account belongs to Models. It is not the organization API Keys setting."**) and fill in the provider's own fields. Those fields differ per provider: the AWS family asks for an AWS region, access key ID and secret access key; Google Vertex asks for a Google Cloud project ID, a Vertex AI location and service-account JSON; Google Gemini asks for a Gemini API key; the Azure family asks for an Azure endpoint and an Azure API key; Databricks asks for a workspace URL and a personal access token; Snowflake Cortex asks for an account identifier and a programmatic access token; Self-Hosted Model asks for an inference endpoint and an *optional* authentication token. OpenAI asks for a key starting `sk-`, Anthropic for one starting `sk-ant-`. Anything else falls back to a generic "{Provider} API key".
+  </Step>
+  <Step title="Model selection">
+    Headed **"Select models"**, with a running count rendered as **"{n} selected · per 1M tokens · approximate latency"** and a `Search models` box. These are the models this account makes available.
+  </Step>
+  <Step title="Access control">
+    Headed **"Workspace access"**, with the line **"Access follows Receipt's existing workspace roles."** Two choices: **Managers** ("Can manage provider accounts and model policy.") is either **"Owners and admins"** or **"Owners only"**; **Users** ("Can use policy-allowed models.") is either **"Workspace members"** or **"Managers only"**. The defaults are Owners and admins, and Workspace members. If you pick Owners only, a user whose workspace role is not `owner` is refused with **"Only workspace owners can manage this Models account."**
+  </Step>
+</Steps>
+
+Two things happen when you save that are worth knowing:
+
+- **The key is authenticated against the provider before it is persisted.** A key that the provider rejects never becomes a stored account.
+- **What is stored back to the app is secret-free.** The account summary the page works with carries a credential fingerprint, not the credential.
+
+Models accounts are scoped to a workspace, not to the organization. With no workspace selected the page raises **"Select a workspace first."**
+
+## The model catalogue
+
+Model ids are always `provider/model`, and they come from eleven manufacturers: `openai`, `anthropic`, `google`, `alibaba`, `deepseek`, `meta`, `mistral`, `minimax`, `moonshotai`, `xai` and `zai`. There were roughly 75 rows at the time this page was written, and the catalogue is described in the code as append-only in practice — so treat the app, not this page, as the list. Each row carries a context window, a zero-data-retention flag, its capabilities, its reasoning efforts, the providers it can route through, and optionally its pricing.
+
+The model table in the gallery has these columns: **Model**, **Type**, **Input / 1M**, **Output / 1M**, **Latency**, **Actions**. When a provider has nothing to show, the row reads **"No models available for this provider."**
+
+- **Type** is derived from the model's capabilities and reads `Reasoning`, `Multimodal` or `Chat`.
+- **Input / 1M** and **Output / 1M** are computed from the catalogue's per-token pricing. A model with no pricing shows `—`.
+
+<Info>
+The **Latency** column is a heuristic, never a measurement. It is derived from the model's own catalogue attributes: `≈ 3–8s` for a reasoning model, `≈ 2–6s` for a model with a very large context window, and `≈ 0.8–3s` otherwise. Nothing is timed, and the value does not change in response to how the provider is actually performing.
+</Info>
+
+## Where the policy controls live
+
+Two routes, one underlying policy record:
+
+- `/organization/settings/provider-policy` — **"Provider policy"**, "Configure provider and model restrictions and compliance flags for your organization." It renders three sections: compliance flags, provider controls, and model controls.
+- `/organization/settings/compliance-policy` — **"Compliance & Policy"**, "Configure organization-level AI rules and access policies." It renders only the compliance flags — the same section as above, nothing more.
+
+Neither route has a sidebar entry; you reach them by URL.
+
+### Compliance flags
+
+| Card | Description in the app | Help text |
+|---|---|---|
+| **Require ZDR (Zero Data Retention)** | "Only allow models from AI providers that do not retain data. This is enforced at the provider level." | "Applies immediately to model availability." |
+| **Require organization provider key** | "Only allow models from providers that have an active organization API key." | "Applies immediately to provider availability." |
+| **Enforce Study Mode** | "Force organization chat requests to use Study Mode and lock the toggle." | "Applies immediately to new chat requests." |
+
+**Require ZDR** does two things. It restricts model selection to catalogue models marked zero-data-retention, denying anything else. And it gates one tool: Anthropic code execution is dropped from a request, with the reason `blocked_by_compliance`, when the organization requires ZDR and has no organization provider key for that provider. It is bypassed for a model whose route provider has an active, executable organization key — which is exactly what the [BYOK](/platform/bring-your-own-key) confirmation dialog warns you about.
+
+<Note>
+Scope the ZDR flag precisely when you describe it to anyone. It restricts which models can be selected and it gates tool access. It is **not** an end-to-end no-retention guarantee, and it does **not** suppress application error telemetry: the flag is recorded into the error-telemetry payload but is never consulted to decide whether to send one. See [Data handling, telemetry, and security](/platform/data-handling-and-security) for what does and does not leave the deployment.
+</Note>
+
+**Require organization provider key** has a working toggle that persists, and nothing in the request path reads it. The only compliance flag checked when a request is evaluated is `require_zdr`. Do not treat this switch as enforcement.
+
+**Enforce Study Mode** is enforcement, and it is specific. An organization-enforced mode wins over both the request's mode and the thread's mode. Study Mode pins the model to `openai/gpt-oss-120b`, injects its own study-assistant system prompt, and disables provider-native tools for `openai`, `anthropic`, `google` and `xai`. In the composer, the Study Mode checkbox becomes disabled and its tooltip changes to **"Study Mode is enforced by your organization"**.
+
+### Provider and model controls
+
+Below the flags, **Providers** ("Enable or disable AI providers for your organization.") gives you one toggle per model-catalogue manufacturer — the eleven above, not the 32 gallery tiles — each with a **"View all models"** link through to that manufacturer's page. Then **Model Controls** ("Override model availability per model. Disabled by provider or compliance policy is shown in the description.") lets you override a provider-level denial for a single model. A row that is already denied describes itself as `{modelId} · Disabled by: {sources}`.
+
+<Warning>
+**The model toggles mean opposite things on the two screens.** On `/organization/settings/models/{providerId}` — the per-manufacturer list, help text "Changes apply immediately. Disabled models are unavailable to the organization." — a **checked** switch means the model is **enabled**. In the **Model Controls** section of `/organization/settings/provider-policy`, a **checked** switch means the model is **disabled**. This is a real inconsistency in the product, not a documentation simplification. Read the screen you are on before you flip anything, and verify the result on the other screen.
+
+The **Providers** toggles on the same page follow the first convention: checked means enabled.
+</Warning>
+
+## What a denial looks like
+
+Every model-policy denial returns HTTP **403**. None of the three reasons below has its own translated string, so they all fall through to the generic message **"The selected AI model is not allowed for your organization."** The machine-readable reason attached to the failure is what tells you which rule fired:
+
+| Reason | What tripped |
+|---|---|
+| `policy_denied:provider` | The model's manufacturer is in the disabled provider list. |
+| `policy_denied:model` | The model itself is in the disabled model list. |
+| `policy_denied:compliance` | Require ZDR is on and the model is not marked zero-data-retention. |
+
+For the full set of chat error strings and what to do about each, see [Errors and limits](/guides/errors-and-limits).
+
+Next step: [add your organization's own provider key](/platform/bring-your-own-key) and change which credential pays for a request.

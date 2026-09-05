@@ -1,0 +1,196 @@
+---
+title: "Connecting providers from the CLI"
+description: "Authorize a provider from the terminal with receipt connect, inspect and remove connections, and use the separate environment-only agent surface."
+---
+
+`receipt connect <provider>` authorizes a provider in your browser and stores the connection in your organization's **Default** workspace. Every `connect` subcommand runs its own browser sign-in, and that sign-in is always bound to Default — [`receipt workspace use`](/cli/workspaces) does not move it. That is also why `receipt connect status` and `receipt tools list` can disagree: `receipt tools` reads the workspace bound into your saved session, while `connect` reports Default. To put a connection in another workspace, use the web interface — see [Connected apps](/platform/integrations).
+
+## Authorizing a provider
+
+```bash
+receipt connect github
+```
+
+The command runs a browser sign-in, then creates an authorization session and prints the link:
+
+```
+Step 2 of 2: authorize github
+  Open: https://<nango-host>/connect?session_token=...
+  Press Enter to open github authorization...
+```
+
+On a TTY it pauses at that prompt before opening your browser. `--yes` or `--auto-open` skips the pause. With browser auto-open disabled it prints `Browser auto-open is disabled; open the URL above to continue.` instead.
+
+Unless you pass `--no-wait`, it then prints `Waiting for github authorization to complete...` and polls `GET /connect/connections` every 2 seconds until a connection for that provider reports status `valid`. The default budget is 10 minutes.
+
+The three endings you can get:
+
+```
+receipt connect: github connection 'default' is ready for server jobs.
+```
+
+```
+Timed out waiting for github connection.
+```
+
+```
+After authorization completes, run 'receipt connect status' to verify the github connection.
+```
+
+The last one is what `--no-wait` gives you.
+
+<Note>
+Polling matches **any** valid connection for that provider, not specifically the one you just authorized. If a valid connection for the provider already exists, the command returns immediately.
+</Note>
+
+### Flags
+
+| Flag | Default | Effect |
+| --- | --- | --- |
+| `--email <addr>` | none | Sent as the end-user email on the authorization session |
+| `--yes`, `--auto-open` | off | Skip the "Press Enter" pause |
+| `--no-wait` | off | Return as soon as the link is opened, without polling |
+| `--timeout-ms <n>` | `600000` | Polling budget in milliseconds |
+| `--no-open` | off | Print the link only, do not open a browser |
+
+`--wait false` is not a working form of `--no-wait`; use `--no-wait`.
+
+A target word or URL may follow the subcommand — `receipt connect status local`, `receipt connect aws dev`, `receipt connect github https://gw.example.com` — alongside the shared `--server-url`, `--auth-url` and `--no-open` flags.
+
+### What the server can refuse
+
+Creating the authorization session requires the `connect:write` scope **and** workspace mutation authority. The refusals you may see:
+
+- `workspace_membership_required` (403) — your token is not allowed to mutate that workspace.
+- `Receipt Connect Nango is not configured...` (503) — the deployment has no integration provider configured.
+- `Unsupported connector. Use one of: aws, gcp, ..., or any integration configured in Nango.` (400) — the provider word is not a known connector id or alias.
+
+An unrecognised provider word fails client-side first, with `unsupported Receipt Connect provider. Use aws, gcp, google-ads, ....`
+
+If a connection already exists for that provider and name, Receipt creates a **reconnect** session against the existing record rather than a new connection.
+
+## Three behaviours worth knowing before you start
+
+These are how the released binary behaves today. You will run into all three.
+
+<AccordionGroup>
+<Accordion title="Every connect subcommand starts a fresh browser sign-in">
+`receipt connect` and all of its subcommands — including `status` and `disconnect` — run a browser device login every time. The session saved by `receipt setup` is not consulted. Being already signed in does not skip this step.
+</Accordion>
+
+<Accordion title="The numbered menu breaks for multi-word connector labels">
+Running bare `receipt connect` prints an interactive menu:
+
+```
+Receipt Connect onboarding
+Credentials are approved with your Receipt account and stored for the active workspace only.
+The CLI will show account metadata, not secret values.
+Signed in: you@example.com
+Workspace: Default (<workspaceId>)
+Current connections: none
+What do you want to connect?
+  1. AWS
+  2. Google Cloud
+  ...
+  63. Show status only
+Choose [1]:
+```
+
+Picking a number returns the **display label**, lower-cases it, and looks it up in the alias map. Labels containing spaces or parentheses — Google Cloud, Terraform Cloud, Azure DevOps, Jira OAuth, Zoho CRM, and others — have no matching alias, so the pick fails before any request is sent:
+
+```
+unsupported Receipt Connect onboarding choice: Google Cloud
+```
+
+Use the connector identifier instead: `receipt connect gcp`, or `--provider gcp`. In a non-TTY the menu picks the default, index 1.
+</Accordion>
+
+<Accordion title="Every CLI-created connection is named `default`">
+The released CLI sends no connection name, so the server always stores the connection as `default`. There is no `--name` flag on the provider flow.
+
+Named connections such as `aws.prod` exist and are usable — `receipt tools --connection aws:prod`, capability key `aws.prod` — but they are created in the web interface, not from the CLI. See [Connected apps](/platform/integrations).
+</Accordion>
+</AccordionGroup>
+
+## Checking what is connected
+
+```bash
+receipt connect status
+```
+
+Prints one line per connection, with whatever account, principal and expiry detail the provider reported:
+
+```
+receipt connect status:
+Current connections:
+  aws:default valid - account <account-id> / <principal> / expires <timestamp>
+  github:work valid
+```
+
+With nothing connected in this workspace:
+
+```
+receipt connect status: no server-side connections configured
+```
+
+Errors surface as `unauthorized`, `workspace_membership_required`, `receipt_connect_storage_unavailable` or `HTTP <n>`.
+
+## Removing a connection
+
+```bash
+receipt connect disconnect --provider github --name default
+```
+
+`disconnect`, `remove` and `revoke` are the same command. **Its defaults are `--provider aws --name default`** — running it bare targets your AWS connection, not the last provider you touched. It finds the matching connection and deletes it:
+
+```
+receipt connect disconnect: removed github:default
+```
+
+```
+receipt connect disconnect: no github:default connection found
+```
+
+Deletion needs `connect:write` and workspace mutation authority. If the integration provider refuses the delete, the gateway answers 502 `integration_connection_delete_failed`.
+
+## The agent surface: `list`, `tools`, `call`
+
+`receipt connect list`, `receipt connect tools` and `receipt connect call` are a separate surface intended for automated callers, and they behave differently from everything above: **they read identity only from environment variables and never from the saved session.**
+
+Gateway URL comes from `--server-url`, `RECEIPT_CONNECT_GATEWAY_URL` or `RECEIPT_PROXY_SERVER_URL`; the token comes from `RECEIPT_CONNECT_TOKEN`. Without them:
+
+```
+Receipt Connect gateway is unavailable; set RECEIPT_CONNECT_GATEWAY_URL
+```
+
+```
+Receipt Connect task token is unavailable; set RECEIPT_CONNECT_TOKEN
+```
+
+| Command | Output |
+| --- | --- |
+| `receipt connect list [--json]` | `Current connections:` with one `<provider>:<name> <status>` line each, or `Current connections: none` |
+| `receipt connect tools <connection>` | `{ok, connection, tools}`, where each tool carries a name, description, `access` of `read` or `write`, and an input schema |
+| `receipt connect call <connection> <tool> [--json '{...}']` | `{ok, connection, tool, access, result, artifacts}` |
+| `receipt connect call <connection> --path /x [--query-json '{...}'] [--headers-json '{...}']` | The provider's JSON response |
+
+### The two call forms
+
+`call` has a **named tool** form and a **read-only GET** form.
+
+The named tool form takes a tool name plus `--json '<object>'` for its arguments. The GET form takes `--path` and reads a provider-relative resource directly; every such call is recorded as a tool receipt named `<connection>:GET <path>`.
+
+The server enforces most of the rules, not the client, so these come back from the gateway:
+
+- `path must be a safe provider-relative absolute path` — no `//`, backslashes, `#`, `.` or `..` segments, encoded slashes or a `/https:` prefix, and at most 4096 characters
+- `body is not allowed on read-only integration calls`
+- `header '<x>' is not allowed`
+- `query '<k>' has an unsupported value`
+- `integration action '<tool>' requires connect:write`
+- `integration action not found or disabled` (404)
+
+Client-side checks fire first, before any request is sent: `receipt connect tools requires a connection id or provider:name`, `receipt connect call requires --path beginning with /`, `receipt connect call is read-only and supports GET only` (any `--method` other than `GET`), `--json must contain valid JSON` and `--json must contain a JSON object`.
+
+A connection whose credential has gone terminally invalid answers 409 with `reconnectRequired: true`; reconnect the provider and retry.
+
+Next step: [call tools and wire up an MCP client](/cli/tools-and-mcp).

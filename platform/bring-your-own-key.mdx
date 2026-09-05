@@ -1,0 +1,114 @@
+---
+title: "Bring your own key"
+description: "Store your organization's own provider API key, and understand exactly which credential pays for a request."
+---
+
+The BYOK page is at `/organization/settings/byok`, is titled **"BYOK"**, and describes itself as **"Optional: use your organization's encrypted provider keys instead of platform credit (Bring Your Own Key)."** That word *optional* is accurate: without a key, requests run on the shared gateway and consume platform credit. With one, matching requests execute against your key instead.
+
+Like the rest of organization settings, the page is owner- and admin-only, and the save path independently re-checks that you hold workspace mutation authority rather than trusting the route guard.
+
+## What you see on the page
+
+One card per provider, titled **"{Provider} API Key"**. The card's description tells you its current state:
+
+- Configured — **"Configured, new requests for this provider will use your org key."**
+- Not configured — **"Not configured, requests will continue using Receipt defaults."**
+
+Below the field is the line **"You can get your {providerName} API key"** followed by a **here** link, pointing at that provider's own key console. The button reads **"Save key"** when nothing is stored and **"Remove key"**, styled as a destructive action, when a key exists. A configured key renders as a row of masked dots and the input stays disabled until you remove the key — you replace a key by removing it and saving a new one, not by typing over it.
+
+Saving and removing confirm with **"Provider key saved successfully."** and **"Provider key removed successfully."** If the organization scope cannot be resolved at all, the page shows **"Organization API keys could not be loaded. Refresh and try again."** instead of the form.
+
+## Which providers appear
+
+The runtime supports two providers for BYOK — **OpenAI** and **Anthropic** — and both are executable.
+
+The page, at this release, renders **OpenAI only**. Anthropic is on a hidden list that the page's provider ordering filters out. That hiding is a presentation decision and nothing more: a key already stored for Anthropic stays encrypted in the database, and the gateway keeps honouring it at request time. So if your organization saved an Anthropic key before it was hidden, it is still in force even though the page no longer shows it.
+
+## Validation happens before storage
+
+Two layers run when you save, and both must pass.
+
+**Layer 1 — format.** A local check on the shape of the string:
+
+| Condition | Message |
+|---|---|
+| Empty value | `Provider API key is required.` |
+| OpenAI key not starting `sk-` | `OpenAI API keys must start with "sk-".` |
+| Anthropic key not starting `sk-ant-` | `Anthropic API keys must start with "sk-ant-".` |
+
+Any other provider gets only the non-empty check.
+
+**Layer 2 — a live call to the provider.** Receipt makes one bounded, non-mutating request with the key you supplied: `GET https://api.openai.com/v1/models` with a bearer token for OpenAI, or `GET https://api.anthropic.com/v1/models?limit=1` with an `x-api-key` header and `anthropic-version: 2023-06-01` for Anthropic. The request is capped at 10 000 ms, and the response body is deliberately ignored — only the status matters.
+
+| Outcome | Message | Retryable |
+|---|---|---|
+| `401` or `403` | `Unable to connect to {provider}. Verify that your {provider} API key is valid.` | No |
+| Any other non-OK status | `{provider} could not validate this API key right now. Try again shortly.` | Yes |
+| Network failure or timeout | `{provider} could not validate this API key right now. Check your connection and try again.` | Yes |
+
+The order matters more than the messages do: **validation runs before encryption and persistence.** A revoked, mistyped or wrong-provider key never becomes durable state, so a failed save leaves whatever was there before untouched.
+
+## How the key is stored
+
+Keys live in the `org_provider_api_key` table, keyed by organization, workspace and provider. The row holds ciphertext, an initialization vector, an authentication tag, a key version and timestamps. It never holds plaintext.
+
+Encryption is AES-256-GCM with a 32-byte wrapping key and a 12-byte random IV, written at key version 1. The wrapping key does not come from the database — it comes from deployment configuration, in the environment variable `BYOK_ENCRYPTION_KEY_B64`, so that a database-only leak is not enough to recover a provider credential. That variable must decode to exactly 32 bytes. Until it does, saving or reading a BYOK key fails with one of these errors:
+
+```
+Missing required environment variable BYOK_ENCRYPTION_KEY_B64.
+BYOK_ENCRYPTION_KEY_B64 must be valid base64.
+BYOK_ENCRYPTION_KEY_B64 must decode to exactly 32 bytes.
+```
+
+If the table itself has not been created yet, the operator-facing error is **"BYOK key storage is not initialized. Run the BYOK migration first."**
+
+The only thing ever written to a log is a **fingerprint** — the first 12 hexadecimal characters of a SHA-256 of the key. It is not reversible and it is not a prefix of the key. The structured logs around the key path carry that fingerprint and nothing secret.
+
+<Warning>
+**Do not rotate `BYOK_ENCRYPTION_KEY_B64` once keys have been saved.** Decryption hard-fails on any key version other than the one a row was written with (`Unsupported BYOK key version: {n}`), and there is no re-encryption or rotation routine anywhere in the product. Rotating the wrapping key therefore makes **every stored provider key permanently undecryptable**, and the only recovery is for every organization to re-enter its keys by hand.
+
+The same applies to `RECEIPT_CONNECTION_ENCRYPTION_KEY_B64`, the wrapping key for Receipt Connect connection references. Generate both once, store them where you store your other deployment secrets, and treat rotating either as a destructive migration you would have to perform manually. See [Configuration, secrets, and keys](/self-hosting/configuration).
+</Warning>
+
+## Why an organization key is invisible from a workspace
+
+BYOK rows are keyed by organization *and workspace*. The organization BYOK page deliberately writes into a hidden global scope rather than into whichever workspace you happen to have open: it resolves an organization-scope workspace id and passes that explicitly.
+
+The consequence is worth stating plainly, because it looks like a bug when you meet it: **a key saved from the organization BYOK page is not visible from a named workspace, and a key saved against a named workspace is not visible to chat through the organization scope.** Organizations never see each other's keys either. If you are looking for a key you are sure you saved, check which scope you saved it in. For the difference between the two containers, see [Organizations and workspaces](/platform/organizations-and-workspaces).
+
+## Which credential actually pays for a request
+
+Once a model has cleared the catalogue and [policy](/platform/model-policy) checks, Receipt resolves the credential in this order:
+
+1. **A workspace Models account credential.** If the request carries a workspace and a user, and a configured Models account resolves to a credential that can route this model, that key is used. Models accounts win over everything below.
+2. **A short-circuit to platform credit.** If strict mode is off and the persisted provider-key snapshot says the organization has no provider keys at all, resolution stops here with no override — the request runs on the shared gateway and consumes platform credit.
+3. **The organization BYOK key.** Candidate providers are taken from the model's own declared provider list, filtered down to the providers BYOK can actually execute against, and evaluated in that declared order. The first candidate with a resolvable key wins and becomes the request's provider-key override.
+4. **Otherwise, platform credit.** No override; the request falls through to the shared gateway.
+
+When an override is present the contract is absolute: runtime model execution must use that key and must not fall back to system credentials.
+
+## Strict mode
+
+Setting the environment variable `CHAT_REQUIRE_BYOK=true` — it is compared as a literal string, and ships as `false` — makes an organization-managed provider key mandatory instead of preferred. Its description in the configuration template is **"Optional strict mode. Set true only when every model request must use a workspace-managed provider key instead of the platform-credit gateway."**
+
+Strict mode adds three denials that cannot otherwise occur, each carrying a machine-readable reason:
+
+| Reason | Condition |
+|---|---|
+| `policy_denied:missing_org_context_for_provider_key` | The request has no organization context. |
+| `policy_denied:provider_not_supported_by_byok:{providerId}` | The model has no provider that BYOK can execute against. |
+| `policy_denied:missing_provider_api_key:{providerId}` | No key is configured for any candidate provider. |
+
+Those reasons are what distinguish the three denials. The last of them is the one that reaches the chat as **"This provider requires an organization API key, but no key is configured."**; the other two do not produce that string. A key that is present but rejected by the provider at execution time surfaces differently, as **"Unable to connect to the AI service. Verify that your organization OpenAI API key is valid."** Both, and the rest of the chat error vocabulary, are in [Errors and limits](/guides/errors-and-limits).
+
+## Saving a key can switch ZDR off for that provider
+
+If your organization has **Require ZDR (Zero Data Retention)** turned on, saving a BYOK key opens a confirmation dialog first:
+
+- Title — **"Disable ZDR for this provider?"**
+- Body — **"Your organization requires ZDR right now. Saving a {providerName} API key will turn off ZDR enforcement for {providerName} requests that use your org key. Other providers keep their current ZDR behavior."**
+- Confirm — **"Save key and disable ZDR"**
+
+That dialog is describing real behaviour, not hedging. An active, executable organization provider key sets a compliance bypass, and the ZDR check is skipped for a model routed through that provider. Other providers keep enforcing it. If you accepted that dialog, your ZDR guarantee for that one provider is gone until you remove the key.
+
+Next step: [look at guardrails](/platform/guardrails) and what the organization can express there.

@@ -1,0 +1,36 @@
+---
+title: "Connect an app"
+description: "Connect a third-party account so Receipt chat and background runs can use it."
+---
+
+Before Receipt can act on a connected app on your behalf, someone has to connect it. That happens on one page: Organization Settings > Integrations.
+
+<Info>
+Connecting here requires organization owner or admin — the rest of this page assumes that role.
+</Info>
+
+## Where to connect
+
+The page is titled **Global Integrations**, and its own description explains the scope: connected once for the whole organization and available to Receipt chat. Workspace-scoped connections for CLI and MCP clients live under MCP Gateway instead.
+
+On the page you'll find a **Search integrations** box, vendor chips for the categories in the catalog, a segmented control for **All**, **Connected**, **Available**, and **Popular**, and cards loaded 60 at a time behind a **Load more** button.
+
+## Connecting
+
+Clicking **Connect** on a card opens that provider's own authorization interface in a dialog. Receipt also polls in the background for up to two minutes afterward, so the card still flips to connected even if the provider's webhook notification is slow to arrive.
+
+The confirmation copy you see depends on where you're connecting from: connecting here, at the organization level, tells you it connects the app "to this organization's Global Integrations. Other organizations you belong to are not affected." Connecting from a workspace's MCP Gateway instead tells you it connects the app "only to the `<workspace>` workspace."
+
+If a connection for that provider already exists, connecting again reconnects it rather than creating a second, separate connection.
+
+## Errors you might see
+
+- **No connection yet**: `No active <Label> connection. Open Organization Settings > Integrations, connect <Label>, then retry.`
+- **Connection went stale**: `Your <Label> connection is no longer valid. Open Organization Settings > Integrations, reconnect <Label>, then retry.`
+- **Unrecognized connector name**: `Unsupported connector. Use one of: <ids>, or any integration configured in Nango.`
+
+## Asking for something not in the catalog
+
+Searching for an app that isn't in the catalog doesn't connect or enable anything. Instead, Receipt offers to file a development task to build that integration — and that task itself requires a GitHub connection before it can be created.
+
+Next step: [see what happens when a turn becomes a background run](/getting-started/background-runs).

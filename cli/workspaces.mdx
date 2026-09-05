@@ -1,0 +1,132 @@
+---
+title: "Switching workspaces"
+description: "Move a CLI session between workspaces with receipt workspace, and understand why that changes everything else the CLI can see."
+---
+
+Your CLI session carries a token bound to exactly one workspace. Every other command — listing connections, listing tools, calling a tool, connecting a provider — is scoped by the workspace id inside that token. That is why switching workspaces is the lever that changes what the CLI can see and do.
+
+`receipt setup` always binds you to the organization's **Default** workspace. `receipt workspace use` is the only way to move.
+
+## Before you start
+
+`receipt workspace` requires a saved session. Unlike `receipt tools`, it does **not** accept environment credentials. Signed out, it fails with:
+
+```
+receipt workspace: not signed in; run 'receipt login' first
+```
+
+<Note>
+There is no `receipt login` on this binary. The command that signs you in is [`receipt setup`](/cli/setup). This error string is shared with another program and was not updated for the released CLI.
+</Note>
+
+All requests go to `<gatewayUrl>/connect/workspaces` with a 35-second timeout.
+
+## The flag parser is not the usual one
+
+`receipt workspace` uses its own minimal argument parser, separate from the rest of the CLI. It understands exactly two flags:
+
+| Flag | Effect |
+| --- | --- |
+| `--json` | Print a JSON envelope instead of text |
+| `--target <name>` | Read and write `session.<target>.json` instead of the default session file |
+
+Two consequences you will hit:
+
+- Flags must be given in space-separated form. `--target dev` works; `--target=dev` does not.
+- Any other flag is silently ignored. Nothing warns you; the command just runs as if you had not typed it.
+
+## Subcommands
+
+| Subcommand | Positionals | What it does |
+| --- | --- | --- |
+| `current` (default), `identity` | none | `GET /connect/workspaces` and prints the workspace the session is bound to |
+| `list` | none | Lists every workspace you can reach, marking the current one |
+| `create <name…>` | name words, joined with spaces | Creates a workspace. Requires organization owner or admin |
+| `rename [<selector>] <name…>` | selector optional | Renames a workspace. The first positional is treated as a selector **only when two or more positionals are given**; with one positional it renames the current workspace |
+| `use <selector>` | selector required | Switches workspaces. The only subcommand that mints a new token and rewrites the session file |
+| `delete <selector>` | selector required | Deletes a workspace |
+
+An unrecognised subcommand answers:
+
+```
+receipt workspace supports list, current, create, rename, use, and delete
+```
+
+An empty name answers `receipt workspace create requires a name` or `receipt workspace rename requires a name`.
+
+### Text output
+
+A single workspace prints as `Name (id)`, with a trailing `[Default]` when it is the default workspace. `list` prefixes each row with a space, except the current workspace, which gets `*`:
+
+```
+* Engineering (<id>)
+  Default (<id>) [Default]
+```
+
+`delete` prints `Deleted workspace <id>`.
+
+### `create` needs an elevated role
+
+`receipt workspace create` calls `POST /connect/workspaces`. If your role in the organization is not owner or admin, the server answers 403 with:
+
+```
+organization owner or admin permission is required
+```
+
+### `use` is the only command that changes your token
+
+`use` calls `POST /connect/workspaces/<id>/token`, receives a new JWT bound to that workspace, and rewrites the session file. Every other subcommand reads and reports; only `use` re-scopes the session.
+
+With `--json`, `use` additionally reports `sessionFile` and `targetSessionFile` so you can see exactly which files were rewritten.
+
+### `delete` is refused twice
+
+Deleting the workspace you are currently in is refused by the CLI before any request is sent:
+
+```
+cannot delete the current workspace; switch to another workspace first
+```
+
+Switch away with `receipt workspace use <other>` first. Separately, the server refuses to delete the Default workspace at all, answering 409:
+
+```
+the Default workspace cannot be deleted
+```
+
+## How selectors match
+
+`use`, `rename` and `delete` take a selector, which is matched case-insensitively against a workspace's **id**, **slug** or **name**. Two failure modes:
+
+```
+workspace 'platform' is ambiguous; use its id
+workspace 'platform' was not found
+```
+
+If more than one workspace matches your selector, pass the id instead.
+
+## Self-healing on `current` and `list`
+
+`current` and `list` reconcile your saved session against what the server reports, and can rewrite the session file as a side effect:
+
+- If the saved workspace name or id has drifted from the server's current workspace, the session file is rewritten in place — no new token.
+- If the saved workspace no longer exists server-side, a fresh token is minted for the server's current workspace and saved.
+
+One thing it will not do: persist a workspace belonging to a different organization. That is refused with `refusing to persist a workspace from another organization`.
+
+## Errors from the server
+
+Server errors surface verbatim, so you can search on the text you saw:
+
+- `unauthorized` (401)
+- `workspace_membership_required` (403)
+- `workspace not found` (404)
+- `a workspace with this name already exists` (409)
+- `workspace name is too long` (400)
+- `workspace name uses a reserved system prefix` (400)
+- `receipt_workspace_unavailable` (503)
+
+<Tip>
+If `receipt tools list` shows fewer tools than you expected, check `receipt workspace current` first. `receipt tools list`, `receipt tools call` and `receipt mcp config` all read the workspace bound into your saved session. `receipt connect status` does not: it signs in again through the browser and always reports the Default workspace's connections, which is why the two can disagree.
+</Tip>
+
+Next step: [connect a provider from the terminal](/cli/connect).

@@ -1,0 +1,407 @@
+---
+title: "Local development"
+description: "Bring the Receipt stack up from a checkout: every prerequisite and why it exists, the three run modes, the full port map, and the failures that actually happen."
+---
+
+Receipt is a Bun + Turborepo monorepo holding two cooperating products that share one PostgreSQL database:
+
+- **The web app**, `apps/start` — TanStack Start + Vite + React with Nitro, Rocicorp Zero for sync-first client state, and Better Auth for users and organizations.
+- **The Receipt runtime and Factory**, `packages/receipt-app` — the event-sourced agent orchestration plane.
+
+Every entry point on this page starts some combination of the two. Choose the one that matches what you are changing, and read the prerequisites first: each one is there because a specific check or process fails without it.
+
+## Prerequisites
+
+### Required for any local run
+
+| Tool | Version | Why it is required |
+| --- | --- | --- |
+| Node.js | 24.x, pinned by `.node-version` and `.nvmrc` | `./bunw` is itself a Node script, and the repo preflight fails when the major version reported by `node --version` does not equal `.node-version`. `start:all` and `local:up` both hard-require `node` before they do anything else. |
+| npm | ships with Node 24 | It has two jobs. It bootstraps the pinned Bun for `./bunw`, and it rebuilds the `@rocicorp/zero-sqlite3` native binding that zero-cache cannot start without. |
+| Bun | **exactly 1.3.12** — `.bun-version`, and `"packageManager": "bun@1.3.12"` in `package.json` | The runtime for every repo command. You do not install it yourself; `./bunw` resolves it or installs it. |
+| Docker, with the daemon running | any recent | Postgres runs in a container (`docker-compose.postgres.yml`), Redis and Nango run in containers for the full stack (`docker-compose.local.yml`), and every OpenSandbox sandbox is a container. `start:all` requires `docker` when it starts Postgres or local infrastructure; `local:up` requires it unconditionally. |
+| curl | any | `start:all` checks for it during preflight, and `validate:stack` requires it. |
+| git | any | A missing `git` binary, or a checkout that is not a git repository, is a **blocking** `receipt doctor` failure. |
+
+<Warning>
+Never run a bare `bun` for repo commands. Use `./bunw` (`bunw.cmd` on Windows), which is the only thing that guarantees the exact pinned version.
+</Warning>
+
+### Also required for the full supervised stack
+
+`start:all` and `local:up` start two more things and check for their tools during preflight.
+
+| Tool | Version | Why it is required |
+| --- | --- | --- |
+| `uv` / `uvx` | any recent | `start:all` requires `uvx` when the OpenSandbox controller is started; it then runs `uvx opensandbox-server` to generate the sandbox config and run the controller. |
+| A `resonate` server binary | **>= 0.9.7** | The Receipt runtime supervisor spawns the Resonate broker itself. Its compatibility check throws below 0.9.7, and if the broker exits the supervisor calls `process.exit` and takes the runtime down with it. |
+
+<Warning>
+**The name you install the Resonate binary under changes the code path.** The supervisor resolves the binary as `RESONATE_BIN`, then `resonate-server` on `PATH`, then `resonate` on `PATH`, then the literal string `resonate-server`. When the basename is `resonate-server`, the supervisor always emits the legacy flag set (`serve --server-bind … --server-port … --observability-metrics-port …`) **and returns early from the >= 0.9.7 version assertion, skipping it entirely**. Installing the binary as `resonate` on `PATH` is what actually exercises both the version check and the CLI-shape probe that selects the modern flags.
+</Warning>
+
+### Required for agent runs
+
+`codex` (`@openai/codex`) is what executes Factory agent work, and **`receipt doctor` treats a missing `codex` as a blocking failure**. The container images pin `0.130.0`; the OpenSandbox guest image installs it unpinned.
+
+### Optional, feature-specific
+
+| Tool | Needed for | If missing |
+| --- | --- | --- |
+| `gh` | GitHub-backed Factory flows | `receipt doctor` warning only |
+| `aws` | AWS-connected Factory flows | `receipt doctor` warning only |
+| `psql` | An optimization in the Receipt smoke suite | Silently skipped |
+| A Cloudflare account and `wrangler` | The markdown-converter worker only | That worker cannot be set up |
+
+<Note>
+`validate:stack`, the whole-stack harness, additionally requires `python3`, `mktemp` and `df`, and enforces a floor of 8192 MiB free disk (`VALIDATE_STACK_MIN_FREE_DISK_MB`) when it starts the stack itself. See [Testing, simulation, and stack validation](/repo/testing-and-simulation).
+</Note>
+
+### Install commands, as the repository writes them
+
+```bash
+# uv, which provides uvx
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# resonate server (macOS arm64 example)
+curl -fsSL -o /tmp/resonate.tgz \
+  https://github.com/resonatehq/resonate/releases/download/v0.9.8/resonate_darwin_aarch64.tar.gz
+tar -xzf /tmp/resonate.tgz -C /tmp
+install -m 0755 /tmp/resonate ~/.local/bin/resonate-server
+resonate-server --version
+
+# codex
+npm install -g @openai/codex@0.130.0
+```
+
+Linux release assets are `resonate_linux_x86_64.tar.gz` and `resonate_linux_aarch64.tar.gz`. Note that the install line above places the binary under the `resonate-server` name, which is exactly the name that takes the legacy flag path and skips the version assertion.
+
+### `./bunw`, the toolchain wrapper
+
+`./bunw` is `exec node scripts/bun.mjs "$@"`. It resolves the expected version from `.bun-version`, falling back to `package.json`'s `packageManager` field, and searches candidates in this order:
+
+`RECEIPT_BUN_BIN` → `BUN_BIN` → `$BUN_INSTALL/bin/bun` → `<repo>/.bun/toolchains/<version>/node_modules/.bin/bun` → `<repo>/.bun/bin/bun` → `~/.bun/bin/bun` → `/opt/homebrew/bin/bun` → `/usr/local/bin/bun` → `PATH`.
+
+Only a binary whose `--version` matches **exactly** is accepted. If none matches, it `npm install`s Bun into the gitignored `.bun/toolchains/<version>/` through a staging directory and an atomic rename. **Your global Bun is never replaced or downgraded.** `RECEIPT_BUN_AUTO_INSTALL=0` disables that bootstrap, in which case you must set `RECEIPT_BUN_BIN` yourself; `RECEIPT_NPM_BIN` overrides which npm performs the bootstrap. Failure exits with code **127** and prints `Set RECEIPT_BUN_BIN=/absolute/path/to/bun to use an existing exact-version binary.`
+
+Check the toolchain at any time:
+
+```bash
+./bunw run toolchain:bootstrap   # resolve or install the pinned Bun, then print its version
+./bunw run toolchain:check       # run the preflight
+```
+
+The preflight prints exactly `[preflight] Environment is ready.` on success, or `[preflight] Environment is not ready:` followed by one `  - <failure>` line per problem, and exits 1.
+
+## Bring up a checkout
+
+<Steps>
+  <Step title="Install the toolchain and dependencies">
+    ```bash
+    ./bunw install
+    ```
+
+    This installs the pinned Bun 1.3.12 first if your machine does not already have it.
+  </Step>
+
+  <Step title="Create your environment file">
+    ```bash
+    cp apps/start/.env.example apps/start/.env.local
+    ```
+
+    Env files do not perform command substitution, so run `openssl rand -base64 32` in your shell and paste each result in as a literal value — do not put `$(openssl rand -base64 32)` in the file itself:
+
+    ```bash
+    openssl rand -base64 32
+    ```
+
+    Run that four times and paste each output into the corresponding line below. A minimal working `apps/start/.env.local`:
+
+    ```bash
+    BETTER_AUTH_SECRET=<paste generated value>
+    BETTER_AUTH_URL=http://localhost:3000
+    VITE_BETTER_AUTH_URL=http://localhost:3000
+    ZERO_UPSTREAM_DB=postgresql://receipt:receipt@localhost:5432/receipt
+    VITE_ZERO_CACHE_URL=http://localhost:4848
+    BYOK_ENCRYPTION_KEY_B64=<paste generated value>
+    RECEIPT_CONNECTION_ENCRYPTION_KEY_B64=<paste generated value>
+    RECEIPT_CONNECT_JWT_SECRET=<paste generated value>
+    VITE_ENABLE_EMBEDDING=false
+    VITE_DISABLE_REDIS=true
+    AUTH_EMAIL_PROVIDER=disabled
+    ```
+
+    Use a separate generated value for each of the four — do not reuse one value across variables.
+
+    The Postgres credentials come from `docker-compose.postgres.yml`: user `receipt`, password `receipt`, database `receipt`. `ZERO_UPSTREAM_DB` is the single canonical database variable and deliberately accepts no aliases — accepting them once let the app and the Receipt runtime silently point at different databases.
+
+    Stop here. You do **not** need a second file; see below.
+  </Step>
+
+  <Step title="Start Postgres">
+    ```bash
+    docker compose -f docker-compose.postgres.yml up -d
+    ```
+
+    The bundled compose file runs `postgres -c wal_level=logical`, which Zero's logical replication requires. A Postgres you brought yourself probably runs with the default `wal_level=replica` and will not sync.
+  </Step>
+
+  <Step title="Compile translations — before the database reset">
+    ```bash
+    ./bunw run --cwd apps/start i18n:compile
+    ```
+
+    This step is mandatory **before** the reset, not after. `web:db:reset` spawns `bunx @better-auth/cli migrate --yes --config src/lib/backend/auth/auth.server.ts`, and that config imports application modules which import the Paraglide bundle generated into `apps/start/src/paraglide`. Without the generated bundle the reset fails on an import.
+
+    `./bunw run dev` compiles i18n itself through its `predev` hook, so this step exists only for the reset ordering.
+  </Step>
+
+  <Step title="Reset the database">
+    ```bash
+    ./bunw run web:db:reset
+    ```
+
+    This is destructive: it drops the `zero_data` publication and every base table in `public`, runs the Better Auth migrations, then runs the Zero reset.
+  </Step>
+
+  <Step title="Run">
+    ```bash
+    ./bunw run dev
+    ```
+
+    Then open [http://localhost:3000](http://localhost:3000).
+  </Step>
+</Steps>
+
+### One environment file, not two
+
+`apps/start/.env.example` carries the line *"For Local Development, Zero requires separate '.env' file"*, because zero-cache is started as `bun --env-file=.env --env-file=.env.local zero-cache-dev` — Bun's own env-file loader rather than the repo's.
+
+That comment is stale. **`apps/start/.env` is not required.** Nothing in the repository creates it, the file is gitignored, and no checked-in code requires it — a normal checkout does not have one, and `ZERO_UPSTREAM_DB` belongs in `.env.local` with everything else. Copy the example to `.env.local` and leave it at that.
+
+<Note>
+Every other entry point loads env files in the same order — `<root>/.env`, `<root>/.env.local`, `apps/start/.env`, `apps/start/.env.local` — where later files override earlier files, but **a value already exported in your shell always wins over any file**. The `receipt` CLI extends that list with `.deploy-artifacts/local-up/latest.env` and the supervisor and validator file lists. For the variables themselves, see [Configuration, secrets, and keys](/self-hosting/configuration).
+</Note>
+
+## The three run modes
+
+| | `./bunw run dev` | `./bunw run start:all` | `./bunw run local:up` |
+| --- | --- | --- | --- |
+| Web tier | **Vite dev server with HMR** | Production Nitro build behind the gateway | Same as `start:all` |
+| Postgres | Started unless `START_DEV_POSTGRES=0` | Started unless `START_ALL_POSTGRES=0` | Always — `local:up` forces `START_ALL_POSTGRES=1` |
+| zero-cache | Yes | Yes | Yes |
+| Receipt runtime | Yes, with `RECEIPT_SERVER_WATCH=api`, so the `api` role runs under `bun --watch` | Yes, no watch | Same as `start:all` |
+| Resonate broker | Yes, supervised by the runtime | Yes | Yes |
+| Redis | No | Yes | Yes |
+| Nango integrations | No | Yes | Yes |
+| OpenSandbox controller | No | Yes, unless `START_ALL_OPENSANDBOX=0` | Yes, and `RECEIPT_FACTORY_COMPUTER_PROVIDER=opensandbox` is forced |
+| Service gateway on 3000 + internal web on 3001 | No — Vite serves 3000 directly | Yes | Yes |
+| Slack / Teams adapters | No | Yes unless `START_ALL_SLACK=0` / `START_ALL_TEAMS=0`; both are optional children | Same |
+| Production web build | No | Yes unless `START_ALL_BUILD_WEB=0` | Yes; `LOCAL_UP_BUILD_WEB` maps to `START_ALL_BUILD_WEB`, default `1` |
+| Database reset | No | No | **Conditionally, and destructively** — a schema probe decides |
+| Logs | stdio inherited | `.deploy-artifacts/start-all/<runId>/<name>.log` | Same |
+
+`dev` runs through a Turbo TUI (`--ui tui`), which needs a real terminal; in a non-interactive shell run `./bunw run --cwd apps/start dev` instead. `dev` and `local:up` cannot run at the same time — they want the same ports.
+
+`local:up` takes one positional argument, the provider, which must be `opensandbox` (alias `computer`). Anything else prints usage and fails with `Unknown provider '<x>'. Use opensandbox.`
+
+### `local:up` resolves everything from the shell, and never reads `.env.local`
+
+This is the single most surprising rule on this page. `local-up.sh` does not read `apps/start/.env.local` at all. It resolves every value from the *shell*, falls back to repo defaults, writes the result to `.deploy-artifacts/local-up/<timestamp>/local.env`, exports it, and then `exec`s the supervisor — and the supervisor **skips any key already present in the environment**. Those exported fallbacks therefore outrank your file.
+
+Source the file into the shell first:
+
+```bash
+cd <repo root>
+
+# 1. Load your local configuration INTO THE SHELL. Not optional.
+set -a; source apps/start/.env.local; set +a
+
+# 2. The one value local-up.sh cannot derive from anything else.
+export LOCAL_UP_ZERO_UPSTREAM_DB="$ZERO_UPSTREAM_DB"
+
+# 3. Optional: skip surfaces you have no credentials for, and allow a slower first boot.
+export START_ALL_SLACK=0 START_ALL_TEAMS=0 START_ALL_WAIT_TIMEOUT_SECONDS=300
+
+# 4. Go. Keep this terminal open — it is the supervisor.
+./bunw run local:up
+```
+
+Docker Compose behaves the same way: `docker-compose.postgres.yml` publishes `"${START_ALL_POSTGRES_PORT:-5432}:5432"`, and Compose reads the shell, not any env file.
+
+### What `local:up` does that `start:all` does not
+
+- **A conditional, destructive database reset.** A schema probe considers the database ready only if `user`, `organization`, `receipt_chat_context_projection`, `receipt_chat_history_projection` and `receipt_receipts` all exist, the legacy `threads` and `messages` tables do **not** exist, and the publication `zero_data` exists. If the probe fails, it runs `web:db:reset`, which drops your data. `LOCAL_UP_DB_RESET=0` disables the reset, `=1` forces it, and `auto` (the default) uses the probe.
+- **A locally minted Connect token.** It looks for an organization holding an OpenAI BYOK row in `org_provider_api_key`, preferring one with a valid `aws` connection secret, and mints a `RECEIPT_CONNECT_TOKEN` with a 12-hour TTL into the env file. It logs either `Using local BYOK organization <org>` or `Configured organization <x> has no local OpenAI BYOK row; using <y>`.
+
+The supervisor then rebuilds the Zero native binding if needed, preflights every port on both IPv4 and IPv6, starts Postgres, Redis and Nango, builds and starts the OpenSandbox controller, pre-migrates the Receipt durable schema *before* running Zero migrations and refreshing the `zero_data` publication, builds the production web bundle, and starts the runtime, zero-cache and gateway. Success is the log line `start_all.ready  Local stack is up`.
+
+## Ports
+
+| Service | Default port | Variable that moves it | Started by |
+| --- | --- | --- | --- |
+| PostgreSQL 16 | 5432 | `START_ALL_POSTGRES_PORT` (read by Compose) | `dev`, `start:all`, `local:up` |
+| Web, Vite dev server | 3000 | `PORT` | `dev` |
+| Service gateway, the public web origin | 3000 | `START_ALL_GATEWAY_PORT`, else `START_ALL_WEB_PORT` | `start:all`, `local:up` |
+| Web internal, Nitro behind the gateway | 3001 | `START_ALL_WEB_INTERNAL_PORT` / `RECEIPT_WEB_INTERNAL_PORT` | `start:all`, `local:up` |
+| Nango API | 3003 | `START_ALL_INTEGRATIONS_PORT` | `start:all`, `local:up` |
+| Nango Connect UI | 3009 | `START_ALL_INTEGRATIONS_CONNECT_PORT` | `start:all`, `local:up` |
+| Slack app | 3010 | `START_ALL_SLACK_PORT` | `start:all`, `local:up` (optional child) |
+| Teams app | 3011 | `START_ALL_TEAMS_PORT` | `start:all`, `local:up` (optional child) |
+| zero-cache | 4848 | `START_ALL_ZERO_CACHE_PORT` / `VITE_ZERO_CACHE_URL` | all three |
+| zero-cache change-streamer | 4849, the cache port + 1 | derived, and preflighted | all three |
+| Redis | 6380 on the host | `START_ALL_REDIS_PORT`; the compose file's own default is 6379 | `start:all`, `local:up` |
+| OpenSandbox controller | 8080 | `START_ALL_OPENSANDBOX_PORT` / `OPEN_SANDBOX_DOMAIN` | `start:all`, `local:up` |
+| Resonate broker | 8001 | `START_ALL_RESONATE_PORT` / `RESONATE_PORT` / `RESONATE_URL` | all three |
+| Resonate metrics | 9090 | `START_ALL_RESONATE_METRICS_PORT` / `RESONATE_METRICS_PORT` | all three |
+| Receipt runtime API | 8787 | `START_ALL_RECEIPT_PORT` / `RECEIPT_PORT` / `PORT` | all three |
+| Mock LLM proxy | 8789 | `RECEIPT_MOCK_LLM_PORT` | `llm:mock` only |
+| TanStack devtools | 42069 | `TANSTACK_DEVTOOLS_PORT` | `dev` only |
+| Factory simulator UI | 4397 | `RECEIPT_SIMULATOR_UI_PORT` | `receipt:simulate:ui` only |
+
+`start:all` preflights, on both `127.0.0.1` and `::1`, only the gateway, web internal, zero-cache, zero-cache + 1, receipt, resonate and resonate metrics ports, plus opensandbox, slack and teams when those are enabled. Postgres, Redis and Nango ports are deliberately **not** preflighted, which is why leaving those containers running between restarts is safe.
+
+`dev` takes a different approach: it kills stale repo-owned listeners on its ports and stale repo-owned zero-cache workers before starting, and errors only when the listener does not belong to this repo — `Port <n> is already in use by a non-repo process; stop it or change the port.`
+
+### Moving the web port without breaking sign-in
+
+`BETTER_AUTH_URL` and the browser-bundled `VITE_BETTER_AUTH_URL` must share the origin you actually browse to. `VITE_BETTER_AUTH_URL` is inlined into the bundle at build time, so a mismatch does not fail loudly — sign-in breaks with CORS errors. Move all four together and rebuild:
+
+```bash
+START_ALL_WEB_PORT=3100 \
+START_ALL_PUBLIC_GATEWAY_URL=http://localhost:3100 \
+BETTER_AUTH_URL=http://localhost:3100 \
+VITE_BETTER_AUTH_URL=http://localhost:3100 \
+./bunw run start:all
+```
+
+For Postgres: `START_ALL_POSTGRES_PORT=5433 docker compose -f docker-compose.postgres.yml up -d`.
+
+## Stopping the stack
+
+There is no `local:down` script.
+
+<Warning>
+**Never `kill -9` the supervisor.** Children are spawned `detached`, so SIGKILL runs no cleanup handler and the whole tier survives, reparented to PID 1 — ports still bound, health endpoints still answering 200 — and the next `local:up` fails its port preflight while the stack that answers you is the old one.
+</Warning>
+
+- Stop with **Ctrl-C** in the `local:up` terminal, or `pkill -f 'bun \./scripts/start-all\.mjs'`, which sends SIGTERM. The supervisor registers `SIGINT`, `SIGTERM` and `exit` handlers and kills each child's process group.
+- `pkill -f local-up.sh` is not a substitute: `local-up.sh` installs no trap and `exec`s the supervisor in a subshell.
+- Killing any non-optional child — a runtime role, Resonate, the gateway, the web tier — also takes the whole stack down through the supervisor's failure path.
+- Zero forks its own workers detached, so `change-streamer.js`, which holds the zero-cache port + 1, can outlive shutdown. Reap it with `pkill -f 'zero-cache/src/server/'` **after** the supervisor has stopped.
+- Cleanup contains no Docker calls, so Ctrl-C never stops the containers. Leaving them up between restarts is the intended fast path. Stop them explicitly with `docker compose -f docker-compose.postgres.yml stop postgres` and `docker compose -p receiptfactory-local -f docker-compose.local.yml stop redis nango`.
+
+<Warning>
+`docker compose -f docker-compose.postgres.yml down -v` deletes the named volume `receipt_postgres_data` — the whole database, including users, organizations, receipts, projections and encrypted BYOK keys, plus the `receipt_integrations` database with Nango's saved connections. `docker system prune -a` also deletes the local OpenSandbox worker image and costs a multi-minute rebuild. Neither belongs in a routine stop.
+</Warning>
+
+## Nothing in `local:up` hot-reloads
+
+The web tier is a prebuilt production bundle with no Vite process, and every server process on that path is spawned without `--watch`. Plan on an explicit action per change:
+
+| What you changed | Minimum action |
+| --- | --- |
+| `packages/receipt-app/src/**` HTTP or UI handlers | Kill the `api` role's listener; the role supervisor respawns it with exponential backoff |
+| `packages/receipt-app/src/**` services, agents, adapters or db code | `pkill -f 'bun src/server.ts'` — all roles respawn |
+| `packages/receipt-app/src/client/**` or its Tailwind CSS | `./bunw run receipt:build` — no restart; assets are re-read per request |
+| `packages/receipt-core`, `-durable` or `-live` used by the runtime | Restart the roles; they are consumed as TypeScript source through workspace links |
+| Anything under `apps/start/src`, or `packages/ui`, `utils`, `chat-scroll` used by the web app | Full rebuild and restart (`local:up`) |
+| `apps/start/scripts/service-gateway.ts` | Full restart |
+| `apps/slack/**` or `apps/teams/**` | Restart just that child; they are optional children |
+| The `receipt` CLI (`packages/receipt-app/src/cli.ts`, `src/cli/**`, `src/factory-cli/**`) | Nothing — the wrapper runs TypeScript from source |
+| A `VITE_*` or `ENABLE_*` value | Rebuild and restart — Vite inlines these into both the browser and SSR bundles |
+| A server-only environment value | Restart only: `LOCAL_UP_BUILD_WEB=0 ./bunw run local:up` |
+| A Zero migration file | `./bunw run --cwd apps/start zero:migrate`, which is safe against a live stack; add a **new** timestamped file, never edit an applied one, because checksums are enforced |
+| A Zero schema that added or removed a **table** | Change the schema and publication membership in one change, then stop, `zero:reset`, `local:up`, and clear browser site data |
+
+For an `apps/start` UI edit loop, use `./bunw run dev` instead.
+
+## Model credentials come from the database, not from the environment
+
+Model credentials are **organization-scoped BYOK rows in Postgres** (`org_provider_api_key`), not a process variable. Funding resolves in this order: a Slack-originated billing request id beginning `slack_evt_` may authorize platform credit first; otherwise an encrypted BYOK key for the organization or workspace, decrypted with `BYOK_ENCRYPTION_KEY_B64` — this is the normal path; and only with a billing request id, the process-wide `OPENAI_API_KEY` as platform credit.
+
+So **setting `OPENAI_API_KEY` in `.env.local` alone will not make agent runs work.** Sign up locally, create an organization, and paste an OpenAI key into its model settings. `receipt doctor` reflects this deliberately: it prints the fixed line `provider auth: organization BYOK required` and performs no model-key check at all.
+
+With neither a BYOK row nor platform credit you will see, in web chat:
+
+- `Platform-funded OpenAI access is unavailable: OPENAI_API_KEY is not configured.`
+- `Platform-funded OpenAI embeddings are unavailable: OPENAI_API_KEY is not configured.`
+
+And from the runtime's funding resolver, when credit is authorized but no key is present: `Platform-funded OpenAI access is authorized, but OPENAI_API_KEY is unavailable.`
+
+<Warning>
+`BYOK_ENCRYPTION_KEY_B64` is an AES-256-GCM key. Do not rotate it once organizations have saved BYOK keys: no re-encryption routine exists anywhere in the codebase and decryption hard-fails on any other key version, so every stored key becomes permanently undecryptable and each organization must re-enter its key. See [Bring your own key](/platform/bring-your-own-key).
+</Warning>
+
+## Offline development with the mock LLM proxy
+
+```bash
+./bunw run llm:mock
+```
+
+A dependency-free Node HTTP server implementing the subset of the OpenAI API that `packages/receipt-app` uses. On boot it prints exactly:
+
+```
+Receipt mock LLM proxy listening on http://127.0.0.1:8789/v1
+Use OPENAI_BASE_URL=http://127.0.0.1:8789/v1 MOCK_OPENAI_API_KEY=mock-key
+```
+
+| Method and path | Behaviour |
+| --- | --- |
+| `GET /health` | `{"ok":true,"service":"receipt-mock-llm-proxy","responses":<count>}` |
+| `POST /v1/responses` | The OpenAI Responses API. Honours `stream: true` with SSE, and structured output via `body.text.format` JSON Schema. |
+| WebSocket upgrade on `/v1/responses` | The same API over a WebSocket transport; falls back to a default response after 2 seconds of silence. |
+| `POST /v1/embeddings` | Deterministic 16-dimension embeddings derived from a SHA-256 of the input; supports `encoding_format: "base64"`. |
+| Anything else | `404 {"error":{"message":"No mock route for <METHOD> <path>"}}` |
+
+For a JSON Schema it synthesizes a value by walking `const` → `enum` → `anyOf`/`oneOf` → object, array, boolean, number, null, picking strings by keyword (`thought`, `summary`, `title`, `reason`, `text`/`answer`, `input`). Two schema names get hand-written shapes: `FactoryChatTurnAnalysis` and `agent_action`.
+
+| Variable or flag | Default | Effect |
+| --- | --- | --- |
+| `--port` / `RECEIPT_MOCK_LLM_PORT` | `8789` | Listen port |
+| `--host` / `RECEIPT_MOCK_LLM_HOST` | `127.0.0.1` | Bind address |
+| `RECEIPT_MOCK_LLM_TEXT` | `Mock model response.` | Default answer text |
+| `--script` / `RECEIPT_MOCK_LLM_SCRIPT` | — | Path to a JSON array of fixture responses; each entry may carry `match` (a substring, or `{schemaName, includes}`), `text`, `status` and `delayMs` |
+| `RECEIPT_MOCK_LLM_FAILURES` | — | Comma list consumed **one per call**: `429`, `500`, any three-digit status, `malformed`, `timeout` |
+| `RECEIPT_MOCK_LLM_TIMEOUT_MS` | `120000` | How long `timeout` mode hangs |
+
+Point the runtime at it:
+
+```bash
+OPENAI_BASE_URL=http://127.0.0.1:8789/v1
+MOCK_OPENAI_API_KEY=mock-openai-key   # optional
+```
+
+The mock-key fallback returns `MOCK_OPENAI_API_KEY`, or the literal `mock-openai-key` when that is unset — but **only when the hostname in `OPENAI_BASE_URL` is `localhost`, `127.0.0.1` or `::1`**. The code states why: keeping the fallback loopback-only stops production BYOK resolution from silently degrading into process-wide credentials. When the mock key is in use, the BYOK reader short-circuits Postgres and logs a line carrying `"source":"local_mock_openai_proxy"`.
+
+<Note>
+The proxy's own banner says `MOCK_OPENAI_API_KEY=mock-key` while the code's default and the repository's markdown say `mock-openai-key`. The value does not matter — the proxy ignores the bearer token entirely.
+</Note>
+
+## Symptom, cause, fix
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `Bun 1.3.12 is required and npm is unavailable for the repo-local bootstrap.` | `./bunw` needs npm to install the pinned Bun | Install Node 24, which bundles npm, or point at an existing exact-version binary: `RECEIPT_BUN_BIN=/path/to/bun-1.3.12 ./bunw install` |
+| `Bun 1.3.12 is required and no exact binary was found.` | `RECEIPT_BUN_AUTO_INSTALL=0` blocks the bootstrap | Unset it, or set `RECEIPT_BUN_BIN` |
+| `[preflight] Environment is not ready: - Node 24.x is required by .node-version, but PATH resolves Node <x>.` | Wrong Node major | Switch to Node 24; `.nvmrc` says `24` |
+| `Resonate CLI <detail> is not compatible with @resonatehq/sdk. Install Resonate >= 0.9.7 or set RESONATE_BIN to a compatible server.` | A `resonate` binary older than 0.9.7 on `PATH`, or none at all — in which case the spawn fails and the supervisor exits, taking the runtime with it | Install >= 0.9.7 or set `RESONATE_BIN`. Remember that naming the binary `resonate-server` bypasses this check entirely and forces the legacy flag set |
+| `Could not locate the bindings file` from zero-cache | The `@rocicorp/zero-sqlite3` native module was built for a different Node ABI or architecture | `start:all` and `local:up` rebuild it automatically; `dev` does not. Rebuild by hand with `npm run install` inside `node_modules/@rocicorp/zero-sqlite3` (or its hoisted location under `node_modules/.bun`), then verify with `node -e "require('@rocicorp/zero-sqlite3')"` — silence means success |
+| `Port <n> is already in use on 127.0.0.1.` or `… on ::1.` | `start:all` asserts every service port free on **both** stacks; a common source is an orphaned earlier stack | Free the port, or move it — moving `BETTER_AUTH_URL` and `VITE_BETTER_AUTH_URL` together |
+| The stack answers health checks but `local:up` will not start | A previous supervisor was `kill -9`ed, or a wrapper was killed instead of the supervisor, so detached children survived under PID 1 with ports bound | `pkill -f 'bun \./scripts/start-all\.mjs'` (SIGTERM, never `-9`), then confirm with `lsof -nP -iTCP -sTCP:LISTEN` that the app ports are free. Docker ports staying up is correct |
+| Port 4849 stays bound after shutdown | Zero forks its workers detached; `change-streamer.js` sits in its own process group. 4848 is not orphan-prone and 4849 is, so checking only 4848 can wrongly suggest nothing leaked | After stopping the supervisor, `pkill -f 'zero-cache/src/server/'` |
+| The UI loads but no data ever syncs | A table missing from the `zero_data` publication silently breaks **all** client sync | `./bunw run --cwd apps/start zero:reset`, or `zero:migrate` against a live stack, and confirm Postgres runs with `wal_level=logical` |
+| A newly published table shows no rows | Logical replication does not backfill | `zero:reset`, which deletes `zero.db*` and forces a full initial sync; also clear browser site data |
+| zero-cache exits shortly after start, following a schema reset | A stale `apps/start/zero.db` retains table DDL and replication watermarks, so Zero replays `CREATE TABLE` into a replica that already has the table and SQLite rejects the duplicate | Delete `zero.db*`, or let `zero:reset` do it |
+| `relation "<schema>.receipt_job_projection" does not exist` during `zero:migrate` | The Zero migration, which refreshes `zero_data`, ran before Receipt's durable projection tables existed in the configured schema | Current `start-all.mjs` pre-migrates the Receipt schema first; if you drive the migration by hand, use the same ordering |
+| `Missing required environment variable BETTER_AUTH_SECRET.`, `Missing BETTER_AUTH_URL. Configure apps/start/.env before starting auth.`, `Missing required environment variable ZERO_UPSTREAM_DB.` | All three are read at module load, so the process dies on import rather than on first request | Set them in `apps/start/.env.local` |
+| `local:up` ignores values in `apps/start/.env.local` | `local-up.sh` reads the shell, writes its own resolved env file and exports it; the supervisor then refuses to override any already-set key | `set -a; source apps/start/.env.local; set +a` before `./bunw run local:up` |
+| Sign-in fails with CORS errors after changing the web port | `VITE_BETTER_AUTH_URL` was baked into the production bundle for a different origin than the one you browse | Set `START_ALL_WEB_PORT`, `START_ALL_PUBLIC_GATEWAY_URL`, `BETTER_AUTH_URL` and `VITE_BETTER_AUTH_URL` to the same origin, and rebuild |
+| Type errors about `@/paraglide/messages.js` | Generated i18n was wiped by a build's clean phase | `./bunw run --cwd apps/start i18n:compile`, and do not run a build and a typecheck in parallel |
+| `Platform-funded OpenAI access is unavailable: OPENAI_API_KEY is not configured.` | Expected until you add an organization BYOK key through the app UI | Sign in, create an organization, add an OpenAI key in its model settings — or run offline with the mock proxy |
+| `Unsupported Factory computer provider '<x>'. OpenSandbox is the only supported provider.` | `RECEIPT_FACTORY_COMPUTER_PROVIDER` set to anything but `opensandbox`; there is no local, non-sandboxed fallback | Unset it. `start:all` also warns and coerces it back: `Ignoring unsupported Factory computer provider; using OpenSandbox.` |
+| Sandbox containers left behind after a crash | `OPEN_SANDBOX_CLEANUP_ON_FINISH=task` cleans sandboxes per task, not per shutdown, so a controller killed mid-task leaves them running | List them with `docker ps -a --filter 'ancestor=opensandbox/execd:<tag>'` and remove only those belonging to a finished task. The local `uvx` controller is unpinned, so check the tag actually present |
+| `<service> exited unexpectedly. Check .deploy-artifacts/start-all/<runId>/<service>.log` | A non-optional child died and the supervisor tore the stack down. Slack, Teams and OpenSandbox are optional and only warn: `<name> exited; continuing with degraded local capabilities.` | Read the named per-service log |
+| `Timed out waiting for <label> at <url>. Check logs in <runDir>` | `START_ALL_WAIT_TIMEOUT_SECONDS`, default 120, elapsed. The first ever Nango boot and the first OpenSandbox image build are far slower | `START_ALL_WAIT_TIMEOUT_SECONDS=300` and retry |
+
+Next step: [use the in-repo developer CLI](/repo/in-repo-cli), which is a different program from the released `receipt` binary.

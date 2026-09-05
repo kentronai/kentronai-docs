@@ -1,0 +1,48 @@
+---
+title: "What Receipt is"
+description: "Receipt is an AI chat platform on Kentron where every turn is either answered directly or run as a durable background objective you can replay."
+---
+
+Receipt is an AI chat platform on Kentron. You send a message, and Receipt decides how to handle it: some turns get an answer right away, and others become durable background work that keeps running while you do something else.
+
+## How every turn is handled
+
+Every message you send first runs through a classification-only router call. The router does no other work — it only returns one of three decisions:
+
+- **Answer directly.** A second, profile-aware pass writes the response you see in the thread.
+- **Author an organization skill.** Receipt drafts or saves a new skill for your organization to reuse.
+- **Enqueue a durable background objective.** Receipt queues the work and streams its progress back into the thread as it runs.
+
+When the router's response can't be parsed, Receipt fails closed to the background objective path rather than guessing at a direct answer.
+
+## Every turn leaves a receipt
+
+Receipt records every turn as a hash-chained receipt. Because each receipt links to the one before it, you can replay a run and see exactly what happened at each step, in order.
+
+## Naming: Receipt, Kentron, and Beetle
+
+The product is **Receipt**, and it runs on the **Kentron** platform. The hosted application is at `app.kentron.ai`.
+
+<Note>
+The shipped interface labels several areas **Beetle** — Beetle Chat, Beetle Tasks, and the Beetle runners widget. Use it to match this documentation to what's in front of you.
+</Note>
+
+## The sidebar you'll see
+
+The sidebar renders, in order: **New**, **Beetle Chat**, **Slack**, **MCP Gateway**, **Model Gateway**, and **Agents**. If you're an owner or admin, you'll also see the administration areas below those. The footer carries a **Docs** link and the **Beetle runners** widget.
+
+## Where to go next
+
+<CardGroup cols={3}>
+  <Card title="Start the product journey" href="/getting-started/your-account">
+    Create your account and send your first chat.
+  </Card>
+  <Card title="Build against the platform" href="/develop/architecture">
+    Learn the architecture behind receipts, streams, and jobs.
+  </Card>
+  <Card title="Run your own instance" href="/self-hosting/overview">
+    Deploy and configure Receipt yourself.
+  </Card>
+</CardGroup>
+
+Next step: [create your account](/getting-started/your-account) to start your first chat.

@@ -1,0 +1,172 @@
+---
+title: "Signing in with receipt setup"
+description: "What receipt setup does and does not do, the browser device login step by step, and the session file and twelve-hour token it leaves behind."
+---
+
+`receipt setup` is how you sign the released CLI in. It is also reachable as `receipt connect setup`, `receipt connect doctor` and `receipt connect check` — all four run the same code.
+
+## What it actually does
+
+Exactly two things, in order:
+
+1. **Signs you in.** It resolves which host to talk to, reuses a saved session if one matches, and otherwise runs the browser device login below and writes a new session file.
+2. **Installs the Claude observer**, but only when the companion binary can be found. If it cannot, the step is reported as skipped with the reason — it is not an error and it does not stop sign-in.
+
+Then it prints your account line, the connector catalog, and the observer state.
+
+<Warning>
+`receipt setup` does **not** start provider onboarding. The Receipt repository's own `docs/receipt-cli.md` says it "starts the guided onboarding flow for the selected workspace"; the shipped code does not. Onboarding a provider is [`receipt connect`](/cli/connect).
+</Warning>
+
+Before the first run, the CLI needs to know which host to sign in against — see [Install the CLI](/cli/install), because a plain `receipt setup` on a fresh machine fails with `receipt connect production URL is not configured yet.`
+
+## Flags
+
+<ParamField path="--target" type="prod | dev | local | http(s) URL" default="prod">
+Which endpoint to use. An `http://` or `https://` value, like `--server-url`, produces a `custom` target. Anything else fails with `receipt connect target must be prod, dev, local, or an http(s) URL`.
+</ParamField>
+
+<ParamField path="--server-url" type="url">
+The Receipt Connect gateway to use, overriding the target. Setting it always produces a `custom` session.
+</ParamField>
+
+<ParamField path="--auth-url" type="url">
+The web origin that hosts the browser sign-in page, when it is not the same host as the gateway.
+</ParamField>
+
+<ParamField path="--fresh-login" type="boolean" default="false">
+Ignore any saved session and run the device login again. This is the fix for an expired token.
+</ParamField>
+
+<ParamField path="--no-login" type="boolean" default="false">
+Skip sign-in entirely; the account line then reads `Receipt account: not connected (disabled by setup flag)`. Aliases: `--skip-login`, `--local-only`.
+</ParamField>
+
+<ParamField path="--no-claude" type="boolean" default="false">
+Skip the Claude observer install. Aliases: `--no-observer`, `--no-background`, `--skip-claude`.
+</ParamField>
+
+<ParamField path="--no-open" type="boolean">
+Print the sign-in URL instead of opening a browser. Setting `RECEIPT_CONNECT_OPEN_BROWSER=0` in the environment does the same.
+</ParamField>
+
+<ParamField path="--json" type="boolean" default="false">
+Return a structured envelope instead of the status lines.
+</ParamField>
+
+Observer flags such as `--proxy-bin <path>`, `--mode` and `--event-log` are passed through to the observer install step.
+
+<Note>
+`--no-open` is a boolean, and this binary's flag parser lets a boolean swallow the next word. `receipt setup --no-open --json` is fine; `receipt setup --no-open` followed by another bare word is not. See [the parsing rules](/cli/overview).
+</Note>
+
+## Session reuse
+
+If a session already exists for the target, `--fresh-login` was not passed, and the saved `gatewayUrl` matches the host you resolved to — `localhost` and `127.0.0.1` count as the same — the existing session is reused and no browser opens. Everything else runs the full device login.
+
+## The browser device login, step by step
+
+<Steps>
+<Step title="The CLI asks for a code">
+It prints `Starting Receipt Connect sign-in at <authUrl>...` and posts a start request to `<authUrl>/api/receipt-connect/cli-login`, with a 15-second timeout.
+
+The server rate-limits this: at most 10 starts per 60 seconds per client IP, and at most 3 requests pending at once. Over either limit it answers HTTP 429 with `{"error":"rate_limited","retryAfter":60}`, and the CLI reports `receipt connect device login failed to start: rate_limited`.
+</Step>
+
+<Step title="You get a code good for ten minutes">
+The server issues an eight-character user code in the form `XXXX-XXXX`, drawn from an alphabet that leaves out the characters people misread — no `I`, `O`, `0` or `1`. It expires after 10 minutes.
+</Step>
+
+<Step title="The CLI prints the code and opens a browser">
+```
+Step 1 of 2: sign in to Receipt
+  Open: https://<your-receipt-host>/api/receipt-connect/cli-login?user_code=ABCD-EFGH
+  Code: ABCD-EFGH
+  Approve the CLI from the workspace that should own these connections.
+```
+
+It then opens that URL in your browser, unless you passed `--no-open` or set `RECEIPT_CONNECT_OPEN_BROWSER=0`. The URL carries only the short user code.
+</Step>
+
+<Step title="You approve it in the browser">
+Approval needs an existing signed-in Receipt session in that browser **and** an active organization. What you see depends on the state:
+
+- **Not signed in** — you are redirected to the sign-in page and returned to the approval page afterwards.
+- **Approved** — `Receipt Connect is approved`, with `You can return to the terminal. This page can be closed.`
+- **No active organization** — `Select a workspace first`, with `Receipt Connect credentials are stored at the workspace level. Open Receipt, select a workspace, then run the CLI command again.`
+- **Unknown or expired code** — `This Receipt Connect code is invalid or expired.`
+- **Code already used** — `This Receipt Connect code was already used. Run the CLI command again.` Each code is single-use.
+</Step>
+
+<Step title="The CLI polls until you approve">
+It polls every 2 seconds, for up to 10 minutes. While you have not approved yet, the server answers `authorization_pending` and the CLI keeps waiting. An expired code ends it with `receipt connect device login expired`; running out of time ends it with `receipt connect device login timed out`.
+
+On success the CLI prints `Receipt sign-in approved.` and writes the session file.
+</Step>
+</Steps>
+
+Other failures you may see from this step: `receipt connect device login request failed for <url>: <message>` for a network or timeout problem, `receipt connect device login failed to start: http_404` when the auth URL is not the web application, `receipt connect device login returned an empty token`, and `receipt connect login did not return a workspace; select a Receipt workspace and try again`.
+
+## What gets written to disk
+
+The active session is `~/.receipt/session.json`. The directory is created with mode `0700` and the file is written atomically — to a temporary file at mode `0600`, then renamed — so it stays readable only by you.
+
+- `RECEIPT_CLI_CONFIG_DIR` moves the whole directory.
+- `RECEIPT_CLI_SESSION_FILE` sets the exact path of the active session file, and suppresses the per-target files entirely.
+
+Alongside the active file, `prod`, `dev` and `local` targets each get their own copy: `session.prod.json`, `session.dev.json`, `session.local.json`. A `custom` target — anything reached through a URL or `--server-url` — writes **no** per-target file, only the active one.
+
+Each file contains:
+
+| Field | What it holds |
+|---|---|
+| `kind`, `schemaVersion` | Fixed markers identifying the file |
+| `target` | `prod`, `dev`, `local` or `custom` |
+| `gatewayUrl` | The Receipt Connect gateway base URL |
+| `authUrl` | The web origin used for sign-in |
+| `token` | **The bearer token, in plaintext** |
+| `userId`, `userEmail` | Who signed in |
+| `organizationId` | The organization the token is scoped to |
+| `workspaceId`, `workspaceName` | The workspace the token is bound to |
+| `savedAt` | When it was written |
+
+<Warning>
+The session file is not secret-free. It stores a live bearer token in the clear, protected only by its `0600` file mode. Do not copy it between machines, commit it, or include it in a bug report.
+</Warning>
+
+A file missing `gatewayUrl`, `token` or `organizationId`, or one that will not parse, is treated as no session at all rather than as an error.
+
+There is no logout command in this binary. To sign out, delete these files yourself.
+
+## The token: twelve hours, three scopes, one workspace
+
+The token the login returns is a JWT that:
+
+- **Expires after 12 hours.**
+- Carries three scopes: `connect:credential`, `connect:read` and `connect:write`.
+- Is bound at login to the organization's **Default** workspace — always. You cannot choose a different workspace during sign-in; approving in the browser picks the organization, not the workspace. Changing workspace afterwards is [`receipt workspace use`](/cli/workspaces).
+
+<Warning>
+Nothing in the CLI checks whether the token has expired. Twelve hours after signing in, every gateway call starts failing with `unauthorized`, while `receipt setup` still finds the saved session and reports it as reused — so it looks like you are signed in and nothing is wrong. When calls fail with `unauthorized` and setup says the session was reused, the token is stale. Run `receipt setup --fresh-login`.
+</Warning>
+
+`setup` also exports the session's values — gateway URL, token, organization, workspace and user id — as environment variables into its own process, and only its own process. They are not exported to your shell.
+
+## What it prints
+
+```
+Receipt account: connected to workspace Default (<workspaceId>)
+Receipt Connect connectors:
+  aws: AWS via real 'aws' CLI
+  gcp: Google Cloud via real 'gcloud' CLI
+  ...
+Claude observer: not installed (Unable to find the Claude observer companion binary. Install a Receipt CLI release that bundles receipt-claude-proxy, or pass --proxy-bin <path> / set RECEIPT_CLAUDE_PROXY_BIN.)
+```
+
+The connector list is the whole catalog — 62 entries — not the connectors you have connected. To see actual connections, use `receipt connect status`.
+
+The observer line reads `Claude observer: installed (<platform> <serviceFile>)` when the companion binary was found and the background service installed.
+
+With `--json` you get the same information as one envelope: `ok`, a `receiptAccount` object (including whether the session was `reused` or `skipped`, the target, gateway URL, identity fields, and the session file paths), the full `connectors` catalog, and `claudeObserver`.
+
+Next step: [switch the workspace your session is bound to](/cli/workspaces).

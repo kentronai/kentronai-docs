@@ -1,0 +1,100 @@
+---
+title: "Manage tools and permissions"
+description: "Control exactly which operations a connection exposes, and understand the fail-closed rules that govern writes."
+---
+
+A connection is not a blanket grant. Every operation a connection publishes is controlled by an allowlist, and the rules around writes fail closed — when Receipt cannot prove an operation is a read, it treats it as a write.
+
+## The dialog
+
+Open a connected card and choose **Manage tools**. The dialog is titled **Manage tools and permissions**, and its description names the scope you are editing:
+
+> `<Integration> · <connection label>. Every published operation is controlled by this <organization|workspace> allowlist.`
+
+It has two sections:
+
+- **Read operations** — "Enable only the data this workspace is allowed to retrieve." When there are none: "No read operations are published for this connection."
+- **Write and delete operations** — "Fail closed by default. Enable only the operations this connection should perform." When there are none: "No write or delete operations are published. This is not a grant of unrestricted provider access."
+
+Each row is a switch reading **Allowed** or **Never allow**. The footer is **Close** and **Save permissions**, and a successful save toasts "Connection permissions saved."
+
+If you are not a workspace owner or admin, the dialog still opens read-only with the banner: "You can review these permissions. Only workspace owners and admins can change access."
+
+## How an operation is classified
+
+Every discovered operation is classified `read` or `write` *before* anything runs, in this order:
+
+<Steps>
+<Step title="Any mutating method wins">
+If any declared endpoint method is `POST`, `PUT`, `PATCH` or `DELETE`, the operation is a **write**.
+</Step>
+<Step title="Endpoint metadata with no mutating method">
+If endpoint metadata exists and declares no mutating method, the operation is a **read**.
+</Step>
+<Step title="No endpoint metadata at all — fail closed">
+Only a conventional read name counts as a read. The accepted prefixes are `get`, `list`, `search`, `find`, `read`, `fetch`, `lookup`, `whoami`, `who-am-i`, `check` and `describe`. Everything else is treated as a **write**.
+</Step>
+</Steps>
+
+For tools discovered from a provider's own MCP server, a `readOnlyHint` annotation is **authoritative** — whether it says true or false. The name heuristic applies only when that annotation is absent.
+
+## Two gates on every write
+
+A write executes only when **both** conditions hold. Either one failing stops the call.
+
+**The token gate.** The caller's token must carry `connect:write`. Without it the call is refused with HTTP 400 and the message `integration action '<tool>' requires connect:write`.
+
+**The allowlist gate.** The operation must be enabled in that connection's stored allowlist. A disabled operation is not callable no matter what the token carries.
+
+<Check>
+A tool that does not exist and a tool that exists but is disabled return the **identical** response: HTTP 404 `integration action not found or disabled`. A caller cannot use error messages to probe for hidden tools.
+</Check>
+
+Saving a name that is not a published operation of that connection is rejected up front with `integration action '<name>' is not available`.
+
+## Version 1 and version 2 policies
+
+The stored policy carries a schema version, and the two versions mean genuinely different things.
+
+| Version | Meaning |
+| --- | --- |
+| 1 — never edited | Reviewed **read** operations are enabled by default. Writes are enabled only when explicitly listed. |
+| 2 — after any admin save | **Only** the listed operations are enabled, reads included. |
+
+Any save from the dialog writes a version-2 policy. That is the transition to be careful about: the first save turns an implicit "reads are on" into an explicit list, so anything you did not tick is now off.
+
+<Warning>
+An **empty version-2 list exposes nothing** — not even reads. It is a valid state, and it is what you get by saving with every switch off.
+</Warning>
+
+Web chat detects exactly that state and answers rather than failing silently:
+
+> `<Provider>` is connected in Global Integrations, but you don't have access to any enabled `<Provider>` tools right now.
+
+followed by a prompt to open Integrations, choose that provider, open **Manage tools**, enable the required tool, and retry the chat request.
+
+## GitHub repository selection
+
+A GitHub connection whose status is `valid` gets a second policy alongside the tool allowlist, shown as a **GitHub repositories** section: "Choose which repositories this connection can use." The selector offers **All repositories** ("Keep the current connection behavior.") and **Selected repositories** ("Limit Receipt to the repositories checked below."), with a `Search repositories…` box. The trigger reads `All repos`, `<n> repos`, or `Repositories`.
+
+Enforcement under `selected` mode is real, not cosmetic:
+
+| Request | Result |
+| --- | --- |
+| `/user` | Allowed — identity |
+| `/user/repos`, `/repositories`, `/orgs/{org}/repos` | Allowed, but the response array is **filtered** to the selected repositories |
+| `/repos/{owner}/{repo}/…` for a selected repository | Allowed |
+| `/repos/{owner}/{repo}/…` for an unselected repository | 403 `GitHub repository '<owner/repo>' is not selected for this connection` |
+| Any other GitHub path | 403 `this GitHub endpoint is unavailable while selected repositories are enforced` |
+
+Repository discovery pages at 100 repositories per page for up to 1,000 repositories, and sets a truncation flag when there are more.
+
+## Atlassian site resolution
+
+For Atlassian connections, Receipt resolves the site itself and rewrites the requested path. If the connection can reach more than one Atlassian site, the call fails explicitly rather than guessing: `<Label> connection exposes multiple Atlassian sites; call the explicit /ex/<product>/{cloudId}/... path`.
+
+## Every call leaves a receipt
+
+Each gateway call writes a `tool.called` receipt and, on success, a `tool.observed` receipt, onto the per-workspace stream `receipt-connect/gateway/<orgId>/<workspaceId>`. Output is truncated at 2,000 characters with a truncation flag. A failed call records only `tool.called`, with its error — which is how outcomes are scored later. Disconnecting an integration is deliberately not recorded as a tool call.
+
+Next step: [point an MCP client at the gateway](/platform/mcp-gateway) and see which of these tools it publishes.

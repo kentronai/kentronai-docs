@@ -1,0 +1,404 @@
+---
+title: "Runtime HTTP and live-event API"
+description: "Every route the Receipt runtime registers, with bodies, statuses, error strings and the live-event contract."
+---
+
+This reference is generated from the routes the runtime registers at start-up. It lists what the server answers on today — not what older API notes describe. It covers the core runtime API: the Receipt Connect routes under `/connect/*`, the runtime's HTML shells, and the token-gated diagnostics family are not part of it.
+
+## Base URL and the gateway prefix
+
+The runtime listens on port `8787` by default (`PORT` overrides it), so direct calls go to `http://localhost:8787`.
+
+Through the service gateway, the runtime is a private service mounted at the `/runtime` prefix, and the gateway strips that prefix before forwarding. `GET /runtime/healthz` at the gateway becomes `GET /healthz` at the runtime. Prefix every path on this page with `/runtime` when you go through the gateway.
+
+<Warning>
+`/connect` is the one runtime prefix the gateway deliberately does **not** strip. `/connect/...` arrives at the runtime with its `/connect/...` path intact, because that is what the runtime's own `/connect` routes expect. Do not add `/runtime` in front of a `/connect` path.
+</Warning>
+
+Matching is longest-prefix, with `/` (the web app) always last. `/runtime-extra/health` does not match the `/runtime` prefix and falls through to the web app, and `/integrations-connectivity` does not match `/integrations`.
+
+## Conventions
+
+JSON responses are written with `Content-Type: application/json; charset=utf-8` and `Cache-Control: no-store`. Error bodies produced by the plain-text helper are `text/plain`.
+
+Four responses come from the framework rather than any individual route:
+
+| Condition | Status | Body |
+|---|---|---|
+| Body is not parseable JSON | 400 | `Malformed JSON body` |
+| Body parses but is not a JSON object | 400 | `Request body must be a JSON object` |
+| No route matches the path | 404 | `Not found` |
+| Any other unhandled error | 500 | `Server error` |
+
+The server's idle timeout is 30 seconds.
+
+## Enqueue a job
+
+### POST /agents/:id/jobs
+
+Enqueues a job for an agent and returns immediately. Publishes the `jobs` topic.
+
+<ParamField path="id" type="string" required>
+  The agent id the job is addressed to.
+</ParamField>
+
+<ParamField body="payload" type="object" required>
+  The job payload. Its `kind` decides which handler runs it.
+</ParamField>
+
+<ParamField body="jobId" type="string">
+  An explicit job id. If a job with this id already exists it is returned unchanged rather than re-enqueued — this is the enqueue-idempotency contract.
+</ParamField>
+
+<ParamField body="lane" type="string" default="collect">
+  One of `chat`, `collect`, `steer`, `follow_up`. All four are accepted.
+</ParamField>
+
+<ParamField body="maxAttempts" type="number" default="2">
+  Clamped to the range 1–8.
+</ParamField>
+
+<ParamField body="sessionKey" type="string">
+  Groups jobs for singleton handling.
+</ParamField>
+
+<ParamField body="singletonMode" type="string">
+  One of `allow`, `cancel`, `steer`.
+</ParamField>
+
+<ParamField body="singleton" type="object">
+  Object form of the same thing: `{ key?, mode? }`.
+</ParamField>
+
+**202**
+
+<ResponseField name="ok" type="boolean" />
+<ResponseField name="job" type="object">
+  The queue job as it now stands.
+</ResponseField>
+<ResponseField name="async" type="object">
+  <Expandable title="properties">
+    <ResponseField name="jobId" type="string" />
+    <ResponseField name="stream" type="string">
+      `jobs/<id>` — the receipt stream for this job.
+    </ResponseField>
+    <ResponseField name="events" type="object">
+      `{ job: "/jobs/<id>/events", receipt: "/receipt/stream" }`.
+    </ResponseField>
+    <ResponseField name="status" type="string" />
+  </Expandable>
+</ResponseField>
+
+```json
+{
+  "ok": true,
+  "job": { },
+  "async": {
+    "jobId": "…",
+    "stream": "jobs/…",
+    "events": { "job": "/jobs/…/events", "receipt": "/receipt/stream" },
+    "status": "queued"
+  }
+}
+```
+
+<Note>
+A 202 means the job was appended, not that anything will run it. Only four agent ids have registered handlers. See [Jobs, lanes, and durable execution](/develop/jobs-and-durable-execution).
+</Note>
+
+## Control a running job
+
+### POST /jobs/:id/steer
+
+Queues a steer command against a job.
+
+<ParamField body="payload" type="object">
+  The steer payload. If absent, the whole request body is used as the payload.
+</ParamField>
+
+<ParamField body="by" type="string">
+  Who issued the command.
+</ParamField>
+
+**202** `{ ok: true, command }`
+
+**404** `job not found`
+
+**409** `job is <status>; continue through its objective`
+
+### POST /jobs/:id/follow-up
+
+Same request and response shape as steer, including the same 404 and 409 strings.
+
+### POST /jobs/:id/abort
+
+<ParamField body="reason" type="string" default="abort requested">
+  Recorded with the abort command.
+</ParamField>
+
+<ParamField body="by" type="string" />
+
+**202** `{ ok: true, command }`
+
+**404** `job not found`
+
+## Read jobs
+
+### GET /jobs/:id
+
+Returns the job. Repairs stale leases in the background as a side effect of the read.
+
+**200** the queue job
+
+**404** `job not found`
+
+**503** `job temporarily unavailable`
+
+### GET /jobs
+
+<ParamField query="status" type="string">
+  Filter by job status: `queued`, `leased`, `running`, `completed`, `failed`, `canceled`.
+</ParamField>
+
+<ParamField query="limit" type="number" default="50">
+  Clamped to the range 1–500.
+</ParamField>
+
+**200** `{ jobs: QueueJob[] }`
+
+### GET /jobs/:id/wait
+
+<Warning>
+**Deprecated.** This route now answers with `Deprecation: true` and `Link: </jobs/<id>/events>; rel="successor-version"`. Subscribe to `GET /jobs/:id/events` instead of long-polling.
+</Warning>
+
+A long poll that returns when the job settles or the timeout elapses, polling every 200 ms internally.
+
+<ParamField query="timeoutMs" type="number" default="15000">
+  Clamped to the range 0–120000.
+</ParamField>
+
+**200** the job
+
+**404** `job not found`
+
+### GET /jobs/:id/events
+
+A server-sent-event stream on the `jobs` topic, keyed by job id. See [Live events](#live-events).
+
+## Memory
+
+Five routes, all `POST`, all scoped by a `:scope` path parameter.
+
+<Warning>
+Every one of the five memory routes requires an actor context. The route reads `actorContext`, then `authContext`, then the top-level body, and that object must carry both a `userId` and an `organizationId`. A missing actor surfaces as a **500**, not a 400.
+</Warning>
+
+<ParamField body="actorContext" type="object" required>
+  `{ userId, organizationId, … }`. May be supplied as `authContext` or as top-level body fields instead.
+</ParamField>
+
+| Route | Additional body | Success |
+|---|---|---|
+| `POST /memory/:scope/read` | `limit?` | **200** `{ entries }` — also appends a `memory.accessed` receipt |
+| `POST /memory/:scope/search` | `query`, `limit?` | **200** `{ entries }` |
+| `POST /memory/:scope/summarize` | `query?`, `limit?`, `maxChars?` | **200** `{ summary, entries }` |
+| `POST /memory/:scope/commit` | `text`, `tags?`, `meta?` | **201** `{ entry }` — publishes the `receipt` topic |
+| `POST /memory/:scope/diff` | `fromTs`, `toTs?` | **200** `{ entries }` |
+
+Commit answers **400** `text required` without `text`. Diff answers **400** `fromTs required` without `fromTs`.
+
+## Channel-neutral chat
+
+These two routes are what the Slack and Teams adapters call. They are channel-neutral: the channel is a field in the body, not a separate endpoint.
+
+### POST /chat/route
+
+Semantic routing — decides how an inbound message should be handled.
+
+<ParamField body="actorContext" type="object" required>
+  May be supplied as `authContext`, or as top-level `userId` / `organizationId`.
+</ParamField>
+
+<ParamField body="latestUserText" type="string" required />
+
+<ParamField body="channel" type="string" required>
+  One of `slack`, `teams`, `web`.
+</ParamField>
+
+<ParamField body="priorProviders" type="array" />
+<ParamField body="boundObjectiveId" type="string" />
+<ParamField body="recentContext" type="object" />
+<ParamField body="receiptConnectCapabilities" type="object" />
+
+**200** `{ ok: true, decision }`
+
+**400** `{ ok: false, error: "actor_context_required", detail }`
+
+**409** `{ ok: false, error: "openai_byok_unavailable", detail: "The organization must configure OpenAI BYOK before semantic chat routing can run." }`
+
+### POST /chat/respond
+
+Writes a direct reply for an external channel.
+
+**200** `{ ok: true, response: { text, profileId } }`
+
+**400** `actor_context_required`, or `latest_user_text_required` when the message text is missing
+
+**409** `openai_byok_unavailable`
+
+**502** `{ ok: false, error: "profile_response_unavailable" }`
+
+## Projection callback
+
+### POST /receipt/callback
+
+The runtime's projection and invalidation callback. It is where the Resonate driver's job callbacks land: `RECEIPT_RESONATE_CALLBACK_URL` and `RECEIPT_EVENT_CALLBACK_URL` both default to `http://127.0.0.1:8787/receipt/callback`.
+
+<Warning>
+This is an invalidation callback, **not an append API**. It publishes a receipt-append change; it does not write receipts.
+</Warning>
+
+<ParamField header="Authorization" type="string">
+  Optional `Bearer $RECEIPT_CALLBACK_TOKEN`. A mismatch answers **401** `unauthorized`.
+</ParamField>
+
+<ParamField body="stream" type="string" required>
+  The receipt stream the change belongs to.
+</ParamField>
+
+The body must also resolve an event type.
+
+**202** `{ ok: true }`
+
+**400** `stream required`, or `eventType required` when no event type can be resolved
+
+**401** `unauthorized`
+
+## Health and readiness
+
+### GET /healthz
+
+Always answers **200** — it is a liveness surface.
+
+<ResponseField name="ok" type="boolean">
+  Always `true` in this payload.
+</ResponseField>
+<ResponseField name="ready" type="boolean" />
+<ResponseField name="degraded" type="boolean">
+  Always `false` in this payload — a literal the runtime writes, not a computed signal. Do not build alerting on it.
+</ResponseField>
+<ResponseField name="uptimeSec" type="number" />
+<ResponseField name="dataDir" type="string" />
+<ResponseField name="processRole" type="string" />
+<ResponseField name="queue" type="object">
+  A cached queue snapshot: `{ version, total, queued, leased, running, completed, failed, canceled, updatedAt? }`. It is cached because, in the code's words, "Health is a liveness surface, not a replay boundary."
+</ResponseField>
+<ResponseField name="postgres" type="object">
+  `{ ok: true, target }` or `{ ok: false, target?, error }`, where `target` is a redacted description of the connection.
+</ResponseField>
+<ResponseField name="codexBin" type="string" />
+<ResponseField name="resonateUrl" type="string" />
+
+### GET /readyz
+
+Answers **200** when Postgres responds to a `SELECT 1` probe and **503** when it does not.
+
+<ResponseField name="ok" type="boolean" />
+<ResponseField name="ready" type="boolean" />
+<ResponseField name="degraded" type="boolean">
+  Always `false` here too.
+</ResponseField>
+<ResponseField name="uptimeSec" type="number" />
+<ResponseField name="processRole" type="string" />
+<ResponseField name="postgres" type="object" />
+
+Neither payload carries `jobBackend`, `checks`, `workers`, `stalledObjectives`, `oldestQueuedMsByLane`, `lastResumeAt`, `lastResumeError` or `watchdog`. The runtime exposes no `/metrics` endpoint of its own.
+
+## Static assets
+
+### GET /assets/:file
+
+Serves the runtime's built CSS and JS.
+
+<ParamField path="file" type="string" required>
+  A bare file name. A name containing `..` or `/` is rejected.
+</ParamField>
+
+**200** the asset, with `Cache-Control: no-cache` for `.css` and `.js` and `public, max-age=3600` for anything else
+
+**400** `invalid asset path`
+
+**404** `asset not found`
+
+## Live events
+
+### The one thing to get right
+
+Runtime live events are **payload-free invalidation signals**. A refresh event tells you that something under a topic changed; it does not tell you what. The `data` line carries the stream name for the `factory` topic when a stream is given, and otherwise a timestamp. Your client must re-fetch the resource it cares about after receiving an event.
+
+### Server-sent events
+
+Two SSE endpoints exist.
+
+| Endpoint | Subscription |
+|---|---|
+| `GET /receipt/stream` | The global `receipt` topic — every receipt invalidation |
+| `GET /jobs/:id/events` | The `jobs` topic, scoped to that job id |
+
+Both respond with `Content-Type: text/event-stream`, `Cache-Control: no-store` and `Connection: keep-alive`.
+
+On connect, each subscription immediately emits its topic's refresh event with `data: init`, so a client that renders on every event gets a first paint without a special case.
+
+Keepalive frames are sent every **5000 ms**:
+
+```
+event: ping
+data: keepalive
+```
+
+### WebSocket
+
+`GET /factory/live` upgrades to a WebSocket. Frames are JSON:
+
+```json
+{ "kind": "event", "topic": "…", "event": "…", "data": "…", "stream": "…", "id": "…" }
+```
+
+```json
+{ "kind": "ping" }
+```
+
+The subscription set is derived server-side from the request's query parameters rather than sent by the client. When no run or job is selected, job scoping keeps at most 16 related jobs.
+
+The browser client upgrades `http`/`https` to `ws`/`wss`, reconnects 1000 ms after a close, and re-dispatches each decoded frame as a DOM event named after the frame's `event`. It requires `WebSocket` and throws when there is none:
+
+> `Live transport requires WebSocket support.`
+
+### Topics and refresh events
+
+| Topic | Refresh event |
+|---|---|
+| `agent` | `agent-refresh` |
+| `receipt` | `receipt-refresh` |
+| `jobs` | `job-refresh` |
+| `factory` | `factory-refresh` |
+| `profile-board` | `profile-board-refresh` |
+| `objective-runtime` | `objective-runtime-refresh` |
+
+Every publish also fans out to the topic's global key, which is why `GET /receipt/stream` sees every receipt invalidation rather than one stream's.
+
+### Data events
+
+Refresh events are not the only frames, but they are nearly all of them. Exactly two data events are published by the runtime today, both by the Factory ingress runner:
+
+- `agent-phase` — payload is `JSON.stringify({ runId, phase, summary })`. The first phase published is `processing`, summarised as "Binding the request to durable objective control."
+- `factory-stream-reset` — published on the `agent` topic, keyed by the chat stream. Payload is an HTML fragment.
+
+No other data event is published. In particular, no server code publishes `agent-token`, even though some browser clients still register a listener for it.
+
+## Diagnostics
+
+The runtime also registers a family of internal diagnostics endpoints. They are token-gated — without a debug token or JWT secret configured they answer **503**, and without a bearer token they answer **401** — and several of them mutate live state. They are deliberately not documented here.
+
+Next step: [write an agent against the TypeScript SDK](/develop/typescript-sdk).

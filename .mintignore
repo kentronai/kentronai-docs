@@ -1,0 +1,6 @@
+# Working files for the documentation project.
+# Excluded from the published site: not built, not indexed, not reachable by URL.
+docs/
+research/
+scripts/
+*.draft.mdx

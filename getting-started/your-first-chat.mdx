@@ -1,0 +1,39 @@
+---
+title: "Your first chat"
+description: "Learn the composer as it actually behaves, including which controls do nothing on a direct answer."
+---
+
+A new chat opens on an empty state: `Hello, <name>` and `What would you like to explore?` Once you're inside a thread, the message box's placeholder becomes `Ask anything`.
+
+## Sending a message
+
+The submit button changes label as your message moves through its lifecycle: **Send message** while idle, **Sending...** once you've submitted, **Stop generation** while the response streams, and **Error** if something goes wrong. While a response is streaming, the same button doubles as a stop control.
+
+## The `+` menu
+
+Next to the message box, the `+` menu opens:
+
+- **Attach files** — attach up to ten files per message. At the limit, the label itself changes to **Attach files (max reached)**.
+- **Study Mode** — the only mode Receipt ships today. It pins the model to a fixed, study-oriented model, injects a study system prompt, and disables all provider-native tools for that thread. If your organization enforces a mode, the checkbox is disabled and reads `Study Mode is enforced by your organization`.
+- **Max** — appears only when the active model has a distinct maximum context window to switch into. If the model doesn't have one, you won't see this control at all.
+- **Tools** — a checkbox group listing the provider tools available to the active model.
+
+<Warning>
+Toggling a tool in the Tools group — Web Search included — changes nothing when Receipt answers you directly. Direct answers are sent with no tools attached at all. Real tool work only happens through a background run (see the next page). This is the single most common misunderstanding about the composer: checking a tool's box does not mean the model will use it on this turn.
+</Warning>
+
+## What you can't change here
+
+The model picker and the reasoning-effort picker are not currently mounted in the composer. There's nothing to click for either one — the model is fixed at your account's default for every chat.
+
+## Reading the context meter
+
+Once you're inside a thread and a model is resolved, a **Context** control appears showing **Input**, **Output**, **Reasoning**, **Cache read**, and **Cache write** for the branch you're on. A **Total cost** row appears too, but only when your organization is using its own provider key, or the operator has turned cost display on for everyone — otherwise that row is simply absent.
+
+## Titles and long pastes
+
+Receipt generates a thread's title from your first message. If you rename a thread yourself, that permanently turns off auto-titling for it — Receipt won't overwrite your title later.
+
+Pasting 2,000 characters or more of plain text turns the paste into a text attachment instead of inline text, when embeddings are enabled for your organization.
+
+Next step: [connect an app](/getting-started/connect-an-app) so Receipt has something to work with.

@@ -1,0 +1,130 @@
+---
+title: "Usage, plans, and billing"
+description: "What the Usage page actually counts, what the Billing page can change, and the one correction that matters: plan feature gating does not fire in this release."
+---
+
+Receipt splits this into two pages. **Usage** reports consumption. **Billing** selects a plan and allocates seats. Both are owner and admin only, and neither has a sidebar entry — you reach them by typing `/organization/settings/usage` or `/organization/settings/billing` directly.
+
+## The Usage page
+
+`/organization/settings/usage` is titled **Usage**, described as "Track your plan usage and model requests."
+
+At the top, a **Current plan** card shows the plan name — or "Loading…" — with an **Active** pill. Below it, a resource grid headed `{planName} plan · {workspace name}` (or "no workspace"), with an **Upgrade** button that links to Billing.
+
+### The three resource tiles
+
+| Tile | What it counts |
+|---|---|
+| **Workspaces** | A plain count. Uncapped. |
+| **Integrations** | A plain count of valid connections. Uncapped, and counted **inside the active workspace only**, because every Receipt Connect connection is scoped to one workspace. |
+| **Members** | Capped. Rendered as `{count} / {limit}` against your seat count, with a progress ring and an at-limit state once the count reaches the limit. |
+
+Members is the only tile with a real cap, because seats are the only per-plan limit enforced today.
+
+### The headline cards and the detail rows
+
+Three headline cards:
+
+- **Requests this period** — total model requests, captioned "total model requests".
+- **Total tokens** — captioned "input, output, and reasoning combined".
+- **Credit used** — platform credit consumed, captioned "platform credit consumed".
+
+Then two sections of stat rows. **Credits and spend** shows **Credit remaining**, **Recorded spend** and **Top model** — the model you used most often, ties broken by whichever you used most recently. **Token breakdown** shows **Input tokens**, **Output tokens**, **Reasoning tokens** and **Cache-read tokens**.
+
+<Warning>
+**These numbers are yours, not your organization's.** Although the section headings say "across the organization", the query behind them filters to the signed-in user, over a rolling **31-day** window. Two admins looking at the same organization's Usage page see two different sets of numbers.
+</Warning>
+
+<Note>
+The two number formats behave differently when a value is missing. A missing value renders as **`Not recorded`** in the stat rows, but as **`0`** in the three headline cards. A headline `0` therefore does not distinguish "nothing happened" from "nothing was recorded".
+</Note>
+
+Money is stored in nano-USD and formatted as USD, with four decimal places for amounts under a cent.
+
+## The Billing page
+
+`/organization/settings/billing` is titled **Billing**, described as "Manage your workspace subscription, seats, and billing details."
+
+### Plans
+
+Six plan identifiers exist: `free`, `plus`, `pro`, `scale`, `enterprise` and `self_hosted` — Free, Plus, Pro, Scale, Enterprise and Self-Hosted.
+
+Only **Plus, Pro and Scale** are checkout-managed. Enterprise is arranged manually, and `self_hosted` is only a valid plan identifier on a self-hosted instance.
+
+<Info>
+Prices and included seat counts are shown in the application, on the Billing and pricing pages. They are not reproduced here: the values carried in the code disagree with each other, so any table published here would be wrong for some readers. Read the current numbers from the product.
+</Info>
+
+### Seats
+
+A **Seat allocation** bar shows `{activeMembers} of {seatCount} seats`. Members beyond capacity are highlighted, and carry the strings **Over seat limit**, **No paid seat assigned**, and "This member is outside the workspace's paid seat capacity. Upgrade seats or remove members to restore paid usage."
+
+The **Seats** input sets the seat count to apply to a plan change — "Choose the seat count to apply to any plan change you make below." If you pick fewer seats than you have active members, Receipt warns:
+
+> You selected `{n}` seats for `{m}` active members. Everyone keeps access until period end, and extra members will be auto-restricted after renewal.
+
+### Changing a plan
+
+**Change plan** states the semantics exactly:
+
+> Select a plan below. Upgrades apply immediately with proration, while downgrades take effect at the next renewal.
+
+The plan buttons reflect that: **Upgrade now** ("Stripe applies this change immediately and invoices prorated charges now."), **Schedule downgrade** ("This change takes effect at the end of the current billing period."), plus **Current plan**, **Scheduled** and **Manage seats**. Confirmation dialogs are titled `Start {plan}`, `Schedule {plan}`, `Switch to {plan}` or `Update {plan}`, confirmed with **Continue to checkout**, **Confirm downgrade** or **Confirm change**, and repeat the proration rule: "Upgrades and seat increases are prorated automatically based on the remaining time in the current billing period." A failed change reports `Subscription change could not be completed.`
+
+**Manage billing details** opens the payment portal — "Open Stripe to manage payment methods, invoices, and billing profile details."
+
+**Cancel to Free** keeps what you have until the period ends: "Keep your current paid plan until the end of the billing period, then move the workspace to Free." The button is **Cancel to Free at period end**.
+
+When a change is already queued, a banner says so: `Scheduled cancellation to Free at period end on {date}.` or `Scheduled change to {plan} with {n} seats on {date}.`
+
+### Who can change it
+
+Owners and admins. Everyone else sees the plan controls disabled, with:
+
+> Only workspace owners and admins can change plans, seats, or billing details.
+
+### On a self-hosted deployment
+
+The whole page is replaced. It reads "This workspace is running in self-hosted mode." and **"Stripe checkout, pricing upgrades, and the billing portal are disabled for self-hosted deployments."** There is no plan to choose and no portal to open.
+
+## Plan feature gating does not fire
+
+<Warning>
+**No feature is locked behind a plan in this release.** Every feature-access check returns allowed, regardless of plan, and every model in the catalog stays selectable. File uploads, bring-your-own-key, organization policies and paid models are all reachable on any plan, including Free.
+
+Do not plan around a paywall that is not there — and if you are troubleshooting, do not assume a plan is the cause.
+</Warning>
+
+The plan-restriction copy still ships, and the upgrade calls to action are still wired to the pricing page, so you may see phrasing such as "This feature requires a `{planName}` subscription." in the interface. Because the check behind it always answers allowed, the corresponding block does not occur. The same applies to the plan-gated error strings listed on [Errors and limits](/guides/errors-and-limits).
+
+## What a plan actually changes today
+
+Three things differ, and they are the three to reason about:
+
+<AccordionGroup>
+
+<Accordion title="Seat count — enforced on invitations">
+
+Seats are checked when you invite someone. The check counts active members, plus pending invitations, plus the new invite, against the seat count. On overflow the invitation fails with HTTP 403 and the message `Only {n} users can access this workspace.` (singular "user" when the limit is one). The invite dialog shows this per address.
+
+Every membership and invitation change recomputes the organization's entitlement snapshot, and an organization past its seat count is flagged as over the limit.
+
+</Accordion>
+
+<Accordion title="The metered usage budget">
+
+Usage is metered against a budget for the plan cycle. Free organizations are not usage-plan-eligible, so their usage runs against the platform credit policy instead of a plan budget.
+
+</Accordion>
+
+<Accordion title="The one-time signup credit">
+
+Each user receives a one-time $5 platform credit at signup — once per user, not once per organization, so it doesn't repeat if you're later added to a second organization. When it is spent, chat reports `Your $5 platform credit has been used. Add an optional provider key in Billing & Credits to continue without platform credit.`
+
+</Accordion>
+
+</AccordionGroup>
+
+Two other things constrain you regardless of plan: your **role**, everywhere, and the chat rate limit of 30 requests per 60-second window.
+
+Next step: [connect the apps your agents will act in](/platform/integrations).

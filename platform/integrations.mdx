@@ -1,0 +1,178 @@
+---
+title: "Receipt Connect and the connector catalog"
+description: "What a connection is, what Receipt holds and does not hold, how connections are addressed, and every connector in the checked-in catalog."
+---
+
+Receipt Connect is the boundary between Receipt and external systems — AWS, GitHub, Jira, Google Workspace, Notion, Zoho and the rest of the catalog at the bottom of this page. Connecting an app creates a **connection**, and everything Receipt can then do on your behalf is decided by that connection.
+
+## Who owns what
+
+Receipt Connect splits ownership deliberately between the integration provider and Receipt.
+
+**The integration provider owns** external authorization — OAuth, API key, basic auth — the provider credential itself, and token refresh.
+
+**Receipt owns** your user and workspace authentication, Receipt Connect JWT issuance, the mapping from a workspace connection name to a provider connection, credential materialization for real CLIs, and runtime policy, receipts and audit.
+
+## What Receipt stores
+
+For Receipt Connect integrations, the raw provider credential stays with the integration provider. Receipt stores only an **encrypted reference**:
+
+```text
+organization + workspace + provider + name  ->  integration id + connection id
+```
+
+That reference lives in the `org_connection_secret` table, encrypted with AES-256-GCM at key version 1. The browser replication layer is narrower still: it exposes only the connection's id, organization, workspace, provider, name, kind, status, expiry, last-validated time and timestamps. Ciphertext and stored metadata never reach a client.
+
+<Warning>
+This describes **Receipt Connect integrations** — the connectors listed below. The Slack and Microsoft Teams apps install through their own flows rather than through Receipt Connect, so do not carry this storage claim across to them.
+</Warning>
+
+### The two cases where Receipt does hold a credential
+
+A connection has one of four kinds:
+
+| Kind | What is stored |
+| --- | --- |
+| `nango-reference` | An encrypted reference to the provider connection — no credential |
+| `local-aws-profile` | A local AWS profile *name* only, no keys |
+| `aws-credential-process` | An AWS `credential_process` bundle you imported |
+| `github-token` | A GitHub token you imported |
+
+The last two are the only cases where Receipt holds a credential. Both are explicit, user-initiated imports, and both are encrypted in the same table as the references.
+
+## How a connection is addressed
+
+A connection is addressed as `provider:name`, and `default` is the implicit name. When you give a connection a name, Receipt normalizes it: the value is trimmed, whitespace becomes `-`, and the result is lowercased. An empty name becomes `default`.
+
+Capability keys follow one rule: the bare provider id for the default connection, and `provider.name` for a named one. So one AWS connection and a second one named `prod` appear as:
+
+```json
+{
+  "aws":      { "provider": "aws", "name": "default" },
+  "aws.prod": { "provider": "aws", "name": "prod" }
+}
+```
+
+That naming rule is why a connection called `prod` does not produce an AWS CLI profile called `prod`. For AWS, Receipt writes the profile `receipt` for the default connection and `receipt-<name>` for a named one — so `prod` becomes the profile **`receipt-prod`**.
+
+Named connections are what keep evidence separated: an agency workspace can hold `google-ads:acme` and `meta-marketing-api:acme` per client.
+
+## The capability manifest
+
+`GET /connect/capabilities` returns the manifest of what the caller can currently reach. Each capability carries a `command`, `provider`, `transport`, `status`, `connectionId`, `name`, `metadata`, `expiresAt` and `discoveredAt`.
+
+- A capability's `status` is `valid`, `expired` or `invalid`.
+- The manifest's own status is `online` when any capability exists, and `offline` otherwise.
+
+A capability is treated as **usable** only when its status carries no failure word. The matcher rejects `invalid`, `expired`, `failed`, `failure`, `error`, `disconnected`, `revoked`, `unauthorized`, `unauthenticated`, `missing` and `blocked` — so an expired connection is present in the manifest but is not usable, and a run that requires it will not start.
+
+## The five execution surfaces
+
+Receipt classifies each catalog connector into exactly one execution surface, derived purely from the checked-in manifest and never from connection metadata. The surface decides what tools, if any, that connector publishes.
+
+| Surface | What it publishes |
+| --- | --- |
+| `typed-proxy` | Reviewed, checked-in tools, each with a fixed provider method and path, a closed JSON Schema, and an explicit `read` or `write` access class |
+| `provider-mcp` | Dynamic tools discovered from the provider's own MCP server — deliberately excluded from the aggregate gateway |
+| `resource-aware-get` | One read tool, for Atlassian connectors, where Receipt resolves the site and rewrites the path |
+| `command-auth` | No Receipt tools at all — the connection becomes real CLI configuration inside a worker |
+| `compatibility-read` | One Receipt-owned tool, `read-provider-resource` |
+
+A `typed-proxy` manifest is validated when the catalog loads, so the rules are hard: `additionalProperties: false` is enforced on every tool schema, `GET` endpoints must be classed `read`, path placeholders must match the declared path parameters in order and each must be a required string input, and any base-URL override must be an HTTPS origin with no path, query or fragment. At call time arguments are validated against that schema, path parameters are URL-encoded into the path, and remaining arguments become query parameters on a GET or a JSON body otherwise. Request bodies are capped at 1 MiB.
+
+### `read-provider-resource`
+
+Every ordinary connector without a narrower manifest gets exactly one Receipt-owned compatibility tool. Its description, verbatim:
+
+> Read one provider-relative API resource through Receipt and Nango. This tool permits GET only; absolute URLs, request bodies, headers, and proxy routing overrides are rejected.
+
+Its input schema accepts only two things: a required `path` that must begin with a single `/` and be at most 4096 characters, and an optional `query` object of scalars or arrays of scalars — at most 100 properties, string values at most 8192 characters, at most 100 array items. Nothing else is accepted.
+
+The path parser rejects non-GET methods, paths that do not start with `/`, `//`-prefixed paths, backslashes, `#`, `.` and `..` segments, `%2f` and `%5c` encodings (decoded repeatedly, up to ten times), `/https:`-style absolute-URL smuggling, and any request body. Caller headers are filtered too, including `authorization`, `cookie`, `host`, `content-length`, `transfer-encoding`, and anything beginning `nango-`, `proxy-` or `x-forwarded-`.
+
+Responses are bounded at 5 MiB with a 30-second timeout, and only a safe allowlist of response headers is echoed back: `content-language`, `content-type`, `etag`, `last-modified`, `link`, `retry-after`, `x-ratelimit-limit`, `x-ratelimit-remaining` and `x-ratelimit-reset`.
+
+<Note>
+`gcp` sits in two places at once. Its manifest declares both a command-backed credential mode and proxy tools, and the classifier checks proxy tools first — so `gcp` reports as `typed-proxy` while still producing an isolated `gcloud` configuration in a worker.
+</Note>
+
+## The connector catalog
+
+The table below is the catalog that ships in Receipt: 62 connectors built from checked-in manifests. There is no separate "enable for this organization" step — a connector is connectable when it is in this catalog or configured in your deployment's integration provider, and an organization admin connects it. A catalog entry that is not connectable in your deployment renders as a card marked **Coming soon** with no button.
+
+Aliases resolve **exactly and case-insensitively**. Display labels are not aliases, so `Google Cloud` is not a name you can type — `gcp` is.
+
+`jira` and `confluence` are product-level shorthands rather than connectors of their own: they resolve to `jira-oauth` and `confluence-oauth`, the connectors marked as their product's default authorization mode. Elsewhere, `tiktok` resolves to `tiktok-ads`.
+
+| Identifier | Label | Aliases | Authorization mode | Tool surface |
+| --- | --- | --- | --- | --- |
+| `aws` | AWS | aws, cloudwatch, ec2, ecs, eks, elb, iam, lambda, rds, s3, vpc | Provider-only (access key pair) | command-auth |
+| `gcp` | Google Cloud | gcp, gcloud, gcs, google, google-cloud, googlecloud, gsutil, bq, bigquery | OAuth 2.0 | typed-proxy — 5 read |
+| `google-ads` | Google Ads | google-ads, googleads, adwords | OAuth 2.0 | compatibility-read |
+| `google-analytics` | Google Analytics | google-analytics, ga4 | OAuth 2.0 | typed-proxy — 2 read |
+| `youtube` | YouTube Analytics | youtube, youtube-analytics | OAuth 2.0 | typed-proxy — 2 read |
+| `google-docs` | Google Docs | google-docs, googledocs, gdocs | OAuth 2.0 | typed-proxy — 2 read |
+| `google-mail` | Gmail | google-mail, gmail | OAuth 2.0 | typed-proxy — 4 read |
+| `google-calendar` | Google Calendar | google-calendar, gcal, googlecalendar | OAuth 2.0 | compatibility-read |
+| `google-calendar-mcp` | Google Calendar (MCP) | google-calendar-mcp, gcal-mcp | OAuth 2.0 | provider-mcp |
+| `google-sheet` | Google Sheets | google-sheet, google-sheets, gsheets, googlesheets | OAuth 2.0 | compatibility-read |
+| `google-drive` | Google Drive | google-drive, gdrive, googledrive | OAuth 2.0 | typed-proxy — 2 read |
+| `google-slides` | Google Slides | google-slides, gslides, googleslides | OAuth 2.0 | typed-proxy — 2 read |
+| `google-chat` | Google Chat | google-chat, googlechat, gchat | OAuth 2.0 | typed-proxy — 3 read |
+| `google-tasks` | Google Tasks | google-tasks, googletasks, gtasks | OAuth 2.0 | typed-proxy — 3 read |
+| `jira-oauth` | Jira OAuth | jira-oauth, **jira** (product default) | OAuth | resource-aware-get — 1 read |
+| `jira-api` | Jira API Token | jira-api, jira-basic | API token | command-auth |
+| `notion` | Notion | notion | OAuth 2.0 | compatibility-read |
+| `lagrowthmachine` | La Growth Machine | lagrowthmachine | API key | compatibility-read |
+| `linkedin` | LinkedIn | linkedin | OAuth 2.0 | compatibility-read |
+| `gong-oauth` | Gong (Oauth) | gong-oauth | OAuth 2.0 | compatibility-read |
+| `stripe-app` | Stripe App | stripe-app | OAuth 2.0 | compatibility-read |
+| `github` | GitHub | github, gh | OAuth 2.0 | compatibility-read, plus the repository selection policy |
+| `github-app-oauth` | GitHub (App OAuth) | github-app-oauth | Custom | compatibility-read |
+| `github-pat` | GitHub (Personal Access Token) | github-pat | Provider-only | compatibility-read |
+| `hubspot` | HubSpot | hubspot | OAuth 2.0 | compatibility-read |
+| `airtable` | Airtable | airtable, airtable-oauth | OAuth 2.0 | typed-proxy — 4 read |
+| `meta-marketing-api` | Meta Marketing API | meta-marketing-api, meta-ads, facebook-ads, facebook-analytics | OAuth 2.0 | compatibility-read |
+| `apollo` | Apollo | apollo, apollo-api-key | API key | typed-proxy — 1 read, 3 write |
+| `attio` | Attio | attio | OAuth 2.0 | compatibility-read |
+| `zendesk` | Zendesk | zendesk, zendesk-oauth, zendesk-api-key | OAuth 2.0 | compatibility-read |
+| `gitlab` | GitLab | gitlab | Provider-only | compatibility-read |
+| `slack` | Slack | slack | OAuth 2.0 | compatibility-read |
+| `linear` | Linear | linear | Provider-only | provider-mcp |
+| `datadog` | Datadog | datadog, dd | Provider-only | compatibility-read |
+| `sentry` | Sentry | sentry | Provider-only | compatibility-read |
+| `cloudflare` | Cloudflare | cloudflare, cf | Provider-only | compatibility-read |
+| `vercel` | Vercel | vercel | Provider-only | compatibility-read |
+| `terraform` | Terraform Cloud | terraform, terraform-cloud, tfcloud, tfc | Provider-only | compatibility-read |
+| `incident-io` | Incident.io | incident-io, incident.io, incidentio | Provider-only | compatibility-read |
+| `azure-devops` | Azure DevOps | azure-devops, ado, azuredevops | OAuth 2.0 | compatibility-read |
+| `confluence-oauth` | Confluence OAuth | confluence-oauth, **confluence** (product default) | OAuth | resource-aware-get |
+| `confluence-api` | Confluence API Token | confluence-api, confluence-basic | API token | compatibility-read |
+| `anthropic` | Anthropic | anthropic | Provider-only | compatibility-read |
+| `openai` | OpenAI | openai | Provider-only | compatibility-read |
+| `zoom` | Zoom | zoom | OAuth 2.0 | compatibility-read |
+| `zoominfo` | ZoomInfo | zoominfo | OAuth 2.0 | compatibility-read |
+| `zoho` | Zoho | zoho | OAuth 2.0 | compatibility-read |
+| `zoho-crm` | Zoho CRM | zoho-crm | OAuth 2.0 | compatibility-read |
+| `zoho-books` | Zoho Books | zoho-books | OAuth 2.0 | compatibility-read |
+| `zoho-desk` | Zoho Desk | zoho-desk | OAuth 2.0 | compatibility-read |
+| `zoho-calendar` | Zoho Calendar | zoho-calendar | OAuth 2.0 | compatibility-read |
+| `zoho-inventory` | Zoho Inventory | zoho-inventory | OAuth 2.0 | compatibility-read |
+| `zoho-mail` | Zoho Mail | zoho-mail | OAuth 2.0 | compatibility-read |
+| `zoho-recruit` | Zoho Recruit | zoho-recruit | OAuth 2.0 | compatibility-read |
+| `zoho-people` | Zoho People | zoho-people | OAuth 2.0 | compatibility-read |
+| `zoho-invoice` | Zoho Invoice | zoho-invoice | OAuth 2.0 | compatibility-read |
+| `instagram` | Instagram Insights | instagram, instagram-analytics, instagram-insights | OAuth 2.0 | typed-proxy — 3 read |
+| `tiktok-ads` | TikTok Ads Analytics | tiktok, tiktok-ads, tiktok-analytics | OAuth 2.0 | typed-proxy — 2 read |
+| `tiktok-accounts` | TikTok Accounts | tiktok-accounts, tiktok-business-accounts | OAuth 2.0 | typed-proxy — 2 read |
+| `tiktok-personal` | TikTok Personal | tiktok-personal, tiktok-login-kit | OAuth 2.0 | typed-proxy — 2 read |
+| `outlook` | Outlook | outlook, microsoft-outlook, outlook-mail | OAuth 2.0 | typed-proxy — 4 read |
+| `azure-blob-storage` | Azure Blob Storage | azure-blob-storage, azure-blob, azure-storage | OAuth 2.0 | typed-proxy — 2 read |
+
+Across the whole catalog that comes to 89 static Receipt tools: 86 read and 3 write.
+
+### Reading the authorization mode column
+
+**Provider-only** means the provider's Connect interface collects the credential directly — an API key, a personal access token, or an access key pair — and Receipt creates the integration record for you if it is missing. **OAuth 2.0**, **OAuth** and **Custom** require an operator to have configured that integration first; when the configured unique key does not match, the failure tells you which environment variable to set.
+
+Next step: [find out where a connection actually lives](/platform/connection-scopes) and why one connected for chat is invisible to the CLI.

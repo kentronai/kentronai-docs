@@ -1,0 +1,77 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "Kentron",
+  "description": "Documentation for Receipt on the Kentron platform.",
+  "colors": { "primary": "#0D9373", "light": "#07C983", "dark": "#0D9373" },
+  "favicon": "/favicon.svg",
+  "logo": { "light": "/logo/dark.svg", "dark": "/logo/light.svg" },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Guides",
+        "groups": [
+          { "group": "Start here", "pages": ["introduction", "getting-started/your-account", "getting-started/your-first-chat", "getting-started/connect-an-app", "getting-started/background-runs", "getting-started/receipts-and-replay"] },
+          { "group": "Working with Receipt", "pages": ["guides/files-and-attachments", "guides/managing-conversations", "guides/errors-and-limits", "guides/monitoring-your-runs"] },
+          { "group": "Channels and help", "pages": ["guides/receipt-in-slack", "guides/getting-help"] }
+        ]
+      },
+      {
+        "tab": "Platform",
+        "groups": [
+          { "group": "Accounts and tenancy", "pages": ["platform/organizations-and-workspaces", "platform/members-roles-and-invitations"] },
+          { "group": "Models and keys", "pages": ["platform/model-policy", "platform/bring-your-own-key"] },
+          { "group": "Organization controls", "pages": ["platform/guardrails", "platform/organization-skills-and-knowledge", "platform/usage-and-billing"] },
+          { "group": "Connected apps", "pages": ["platform/integrations", "platform/connection-scopes", "platform/manage-tools-and-permissions", "platform/mcp-gateway"] },
+          { "group": "Data and trust", "pages": ["platform/data-handling-and-security"] }
+        ]
+      },
+      {
+        "tab": "CLI",
+        "groups": [
+          { "group": "The released CLI", "pages": ["cli/overview", "cli/install", "cli/setup", "cli/workspaces", "cli/connect", "cli/tools-and-mcp", "cli/observe-claude-code"] }
+        ]
+      },
+      {
+        "tab": "Developers",
+        "groups": [
+          { "group": "Platform architecture", "pages": ["develop/architecture", "develop/receipts-and-streams", "develop/jobs-and-durable-execution"] },
+          { "group": "APIs and SDK", "pages": ["develop/runtime-api", "develop/typescript-sdk"] }
+        ]
+      },
+      {
+        "tab": "Self-hosting",
+        "groups": [
+          { "group": "Before you start", "pages": ["self-hosting/overview"] },
+          { "group": "Configure", "pages": ["self-hosting/configuration", "self-hosting/database-and-migrations", "self-hosting/integrations-provider"] },
+          { "group": "Deploy", "pages": ["self-hosting/deploying"] }
+        ]
+      },
+      {
+        "tab": "Working from source",
+        "groups": [
+          { "group": "Running the repository", "pages": ["repo/local-development"] },
+          { "group": "The in-repo CLI", "pages": ["repo/in-repo-cli", "repo/receipts-and-jobs-commands"] },
+          { "group": "Factory", "pages": ["repo/factory-overview", "repo/factory-cli-reference"] },
+          { "group": "Building on Receipt", "pages": ["repo/authoring-agents", "repo/testing-and-simulation"] }
+        ]
+      }
+    ]
+  },
+  "navbar": { "links": [{ "label": "Contact Us", "href": "mailto:feedback@kentron.ai" }] },
+  "footer": { "socials": { "linkedin": "https://www.linkedin.com/company/kentronai", "github": "https://github.com/devkentron" } },
+  "redirects": [
+    { "source": "/user-guide", "destination": "/getting-started/your-first-chat" },
+    { "source": "/quickstart", "destination": "/getting-started/your-account" },
+    { "source": "/development", "destination": "/repo/local-development" },
+    { "source": "/connector", "destination": "/platform/integrations" },
+    { "source": "/connectors/:slug*", "destination": "/platform/integrations" },
+    { "source": "/regulations", "destination": "/platform/data-handling-and-security" },
+    { "source": "/regulation/:slug*", "destination": "/platform/data-handling-and-security" },
+    { "source": "/data-classification", "destination": "/platform/data-handling-and-security" },
+    { "source": "/search", "destination": "/guides/managing-conversations" },
+    { "source": "/support/contact-us", "destination": "/guides/getting-help" },
+    { "source": "/essentials/:slug*", "destination": "/introduction" },
+    { "source": "/api-reference/:slug*", "destination": "/develop/runtime-api" }
+  ]
+}

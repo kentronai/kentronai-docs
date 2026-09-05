@@ -1,0 +1,171 @@
+---
+title: "Calling tools and wiring MCP clients"
+description: "Use receipt tools to list, inspect and call gateway tools, and receipt mcp to generate or install a client configuration."
+---
+
+Receipt exposes every tool your connections publish through one aggregate MCP server at `POST /connect/mcp`. `receipt tools` is the terminal client for it. `receipt mcp` is how you point another client at the same gateway.
+
+Both are scoped by the workspace bound into your session token, so [switching workspaces](/cli/workspaces) changes which tools appear.
+
+## `receipt tools`
+
+```bash
+receipt tools list
+receipt tools describe <tool>
+receipt tools call <tool> --json '{"key":"value"}'
+```
+
+| Subcommand | Behaviour |
+| --- | --- |
+| `list [<connection>]` | Without a connection, a JSON-RPC `tools/list` against the aggregate gateway. With one, `POST /connect/tools` for that connection alone |
+| `describe <tool>` | Lists, then returns the entry whose name matches exactly. Missing name → `receipt tools describe requires a tool name`; no match → `Receipt tool '<name>' was not found` |
+| `call <tool>` | Aggregate: JSON-RPC `tools/call`. With `--connection`: `POST /connect/call` |
+
+Anything else answers `receipt tools supports list, describe, and call`.
+
+### Identity
+
+Identity comes from either your saved session — optionally selected with `--target <name>` — or from the environment: `RECEIPT_CONNECT_GATEWAY_URL` (or `RECEIPT_CONNECT_PUBLIC_GATEWAY_URL`) plus `RECEIPT_CONNECT_TOKEN` and `RECEIPT_CONNECT_ORGANIZATION_ID`. `--server-url <url>` overrides the gateway.
+
+With neither, it fails with:
+
+```
+receipt mcp: not signed in; run 'receipt login' first
+```
+
+<Note>
+That message says `receipt mcp:` even when you ran `receipt tools`, and it names a command this binary does not have. Sign in with [`receipt setup`](/cli/setup).
+</Note>
+
+### Flags
+
+| Flag | Effect |
+| --- | --- |
+| `--connection <id\|provider:name>` | Narrow to a single connection instead of the aggregate gateway |
+| `--json '<object>'` | **Tool arguments** for `call`. Defaults to `{}`. Invalid input → `--json must be a JSON object` |
+| `--target <name>` | Choose which saved session to use |
+| `--server-url <url>` | Override the gateway URL |
+| `--output <path>`, `--output-file <path>` | Write the envelope to a file atomically at mode `0600`, and print `{ok, outputFile, bytes}` |
+
+<Warning>
+`--json` on `receipt tools` is the **tool-argument payload**, not an output switch. Output is always JSON, whether or not you pass it. If you type `receipt tools call <tool> --json` expecting pretty output, you are passing arguments to the tool.
+</Warning>
+
+### The output envelope
+
+Every result is JSON, shaped as the tool's own result merged into an envelope with a workspace identity block:
+
+```json
+{
+  "ok": true,
+  "workspace": {
+    "kind": "workspace",
+    "id": "...",
+    "name": "Default",
+    "organizationId": "..."
+  }
+}
+```
+
+For a legacy session with no workspace id, the block reads `{"kind": "organization-default", "id": "<orgId>", "organizationId": "<orgId>"}` instead. The block exists so you can always tell which scope answered.
+
+### Tool names are opaque aliases
+
+Aggregate tool names look like `receipt_github_work_list_repositories_3f9a...` — a readable prefix followed by a digest. The digest binds the name to one exact stored connection and one reviewed upstream tool, which is why two connections for the same provider never collide.
+
+<Warning>
+Copy tool names from `receipt tools list`. Never construct or edit one. The gateway's own instructions to MCP clients say so: "Tool names from tools/list are opaque; use them exactly and never construct aliases."
+</Warning>
+
+The same instructions cover two more rules worth repeating: read-only annotations are authoritative, and you should re-list tools after switching workspaces or reconnecting a provider.
+
+### What shows up in `tools list`
+
+The aggregate list includes only connections in your token's workspace that are valid, and:
+
+- Connectors with a typed manifest publish exactly their manifest tools.
+- Connectors without one publish a single GET-only `read-provider-resource` tool.
+- Provider-native MCP connectors are **excluded from the aggregate list**. They remain reachable through `receipt tools --connection <connection>`.
+- Write tools appear only when your token carries `connect:write` and the connection's policy enables them.
+- One unhealthy connection is skipped with a warning rather than failing the whole listing.
+
+### A successful envelope does not mean the provider succeeded
+
+When a provider-side call fails on an aggregate call, the gateway returns it as a **normal MCP result carrying an error flag and error text**. The CLI still prints `ok: true`.
+
+<Warning>
+`ok: true` reports that the gateway answered, not that the provider did the thing. Read the result body before treating a call as successful.
+</Warning>
+
+Failures at the JSON-RPC level do throw, and you will see them as errors: `Unknown or unavailable tool`, `Invalid params`, `Receipt MCP discovery failed`. HTTP-level failures surface as `unauthorized`, `workspace_membership_required` or `Receipt MCP returned HTTP <n>`.
+
+## `receipt mcp`
+
+```bash
+receipt mcp config generic
+receipt mcp install codex
+receipt mcp status codex
+receipt mcp remove codex
+receipt mcp serve
+```
+
+The subcommand defaults to `status`. An unrecognised one answers `receipt mcp supports config, install, status, remove, and serve`. Identity is resolved before any subcommand runs, so `config` and `status` need a saved session; only `serve` accepts the environment fallback.
+
+### `config` — print a client configuration
+
+`receipt mcp config codex` emits a TOML block:
+
+```toml
+[mcp_servers."receipt"]
+command = "/path/to/receipt"
+args = ["mcp", "serve"]
+```
+
+Any other client name — `receipt mcp config generic`, or `--client generic` — emits a JSON descriptor instead. The JSON form carries the same launcher, and additionally reports the remote `/connect/mcp` URL and a workspace identity block:
+
+```json
+{
+  "kind": "receipt.mcp-client-config",
+  "schemaVersion": 1,
+  "name": "receipt",
+  "transport": "stdio",
+  "command": "/abs/receipt",
+  "args": ["mcp", "serve"],
+  "remote": { "url": "https://<gateway>/connect/mcp" },
+  "workspace": { "kind": "workspace", "id": "...", "name": "Default", "organizationId": "..." }
+}
+```
+
+`remote.url` is informational. **The session token is never written into a generated config**, and a guard checks every config the CLI generates or installs, refusing with `refusing to install an MCP client config containing the Receipt session token` or `refusing to install an MCP client config containing credential material`.
+
+Other flags: `--name <n>` sets the MCP server name (default `receipt`), `--receipt-bin <path>` sets the launcher command, and `--json` prints `{ok, client, config, content, output}`.
+
+<Warning>
+`--output` / `--output-file` on `receipt mcp config` **replaces the whole target file**. There is no merge with existing content. Never point it at a client's live configuration file — write it somewhere new and copy the block in by hand.
+</Warning>
+
+### `install`, `status` and `remove` support Codex only
+
+Any other client is refused:
+
+```
+receipt mcp install/status/remove currently supports codex; use 'receipt mcp config --client generic' for other clients
+```
+
+For Codex, the CLI shells out to `codex mcp add|get|remove` rather than editing the file itself, and protects the file around every mutation:
+
+- The config path is `$CODEX_HOME/config.toml`, defaulting to `~/.codex/config.toml`. A different `--client-config` is rejected with `Codex does not accept an arbitrary config path; expected <path>. Set CODEX_HOME before running Receipt if Codex uses another home.`
+- It refuses to touch a symlink or non-regular file: `refusing to modify non-regular client config: <path>`.
+- It backs the file up before mutating it, and **restores the backup on any failure** — including post-condition failures such as `codex did not report the installed Receipt MCP server; the prior config was restored`.
+- A duplicate install is refused: `Codex MCP server '<name>' is already installed; remove it first`.
+- `remove` on something not installed reports `{ok: true, removed: false, installed: false}` rather than failing.
+
+`--dry-run` on `install` and `remove` prints the plan and changes nothing.
+
+For every other client the supported path is `receipt mcp config --client generic`; `install`, `status` and `remove` throw.
+
+### `serve` — the stdio bridge
+
+`receipt mcp serve` is what an installed client launches. It reads one JSON-RPC message per line on stdin, forwards it to `<gateway>/connect/mcp` with your session bearer token, and writes each response as a line on stdout. Each request gets 35 seconds. Failures come back as JSON-RPC errors, and notifications — messages with no id — never receive a response, even on failure.
+
+Next step: [capture Claude Code activity into Receipt](/cli/observe-claude-code).

@@ -1,0 +1,90 @@
+---
+title: "The receipt CLI"
+description: "Which of the two programs named receipt this tab documents, what its command surface actually is, and the parsing behaviour that trips people up."
+---
+
+Two different programs are named `receipt`. One is the released binary you install on your own machine. The other is the in-repo developer CLI, which only runs inside a Receipt git checkout. **This tab documents only the released binary.**
+
+They are not the same program with different options. The released binary is a strict subset, and several of the commands people expect to find — including sign-out — exist only in the other one. Sign-in is not one of them: `receipt setup` is shared by both, and it is this binary's own sign-in command.
+
+## Everything the released binary can do
+
+The whole command surface is:
+
+- `setup` — [sign in](/cli/setup), and install the Claude observer when the companion binary is present
+- `workspace` — [read and switch the workspace](/cli/workspaces) your session is bound to
+- `tools` — [list, describe, and call](/cli/tools-and-mcp) gateway tools
+- `mcp` — [print, install, and serve](/cli/tools-and-mcp) MCP client configuration
+- `connect` — [authorize providers](/cli/connect), inspect connections, and disconnect them
+- `import` and `observe` — [capture Claude Code activity](/cli/observe-claude-code)
+- `--version` (also `-V`)
+
+There is no `login`, `logout`, `whoami`, `run`, `jobs`, `memory`, `debug` or `factory` in this binary. Those are commands of the in-repo CLI.
+
+<Warning>
+Several error messages in the released binary still tell you to sign in with a command it does not have. Signed out, `receipt workspace` and `receipt tools` fail with `not signed in; run 'receipt login' first` — for example `receipt mcp: not signed in; run 'receipt login' first`. `receipt login` does not exist here. The command that signs you in is `receipt setup`.
+</Warning>
+
+There is also no logout. The code that deletes a saved session exists, but no command in the released binary calls it, so signing out means deleting the session files by hand — see [Signing in](/cli/setup) for where they live.
+
+## Parsing behaviour worth knowing before you hit it
+
+The binary matches commands in a fixed order, and the first match wins. That ordering has consequences you will run into on your first session.
+
+### `--help` does not work on three commands
+
+`tools`, `mcp` and `workspace` are matched *before* the help check, so `receipt tools --help`, `receipt mcp --help` and `receipt workspace --help` never print help. They try to run instead, and signed out they fail with the not-signed-in error above. With a saved session, `receipt mcp --help` runs `mcp status codex`.
+
+The only commands that print usage are `receipt --help`, `receipt help` and `receipt connect --help`.
+
+### The word `connect` is optional
+
+A leading `connect` is dropped before dispatch, so `receipt status` is `receipt connect status` and `receipt aws` is `receipt connect aws`.
+
+Bare `receipt` with no arguments is therefore `receipt connect` — it starts the interactive onboarding flow, which begins a browser sign-in. If you typed `receipt` expecting a help screen, a browser window opening is the expected behaviour, not a bug.
+
+### A boolean flag can swallow the next word
+
+`--flag value` consumes the following token as that flag's value unless the token starts with two dashes. Boolean flags are not exempt, so:
+
+```bash
+receipt connect --no-open status
+```
+
+sets `no-open` to the string `"status"` rather than `true`. The check is for the literal value `true`, so the browser still opens. Put boolean flags last, or use a `--flag=value` form the command accepts — for the browser flag that is `--open=false`, which does the same thing as `--no-open`:
+
+```bash
+receipt connect status --no-open
+receipt connect --open=false status
+```
+
+Setting `RECEIPT_CONNECT_OPEN_BROWSER=0` also keeps the browser closed.
+
+A bare `--` ends flag parsing. A repeated flag accumulates and the last value wins.
+
+<Note>
+The `tools`, `mcp` and `workspace` subcommands use their own simpler parser that accepts `--key value`, `--key=value`, and a bare `--key` as a boolean, and does not support repeated flags at all.
+</Note>
+
+### Output and exit codes
+
+Successful output goes to standard output. Errors print to standard error and set exit code 1.
+
+## `receipt --version`
+
+`receipt --version` (or `-V`), passed as the only argument, prints `receipt` followed by the build version. That version is whatever version string the release build was given: the build script sets it as a compile-time constant from the release version, falling back to a short git SHA. A run that is not a compiled build reports `development` instead. Do not expect a particular string — read it from your own install.
+
+## The two binaries side by side
+
+|  | Released `receipt` binary | In-repo `receipt` |
+|---|---|---|
+| How you get it | [Installer script](/cli/install) drops one compiled binary on your machine | Comes with a Receipt git checkout, run through the `.receipt/bin/receipt` shell wrapper |
+| What it needs | Nothing but the binary | The checkout and Bun, plus Postgres for most commands |
+| Command surface | `setup`, `workspace`, `tools`, `mcp`, `connect`, `import`, `observe`, `--version` | `setup`, `workspace`, `tools`, `mcp`, `connect`, `import`, `observe` (no `--version` — see below), plus `login`, `logout`, `whoami`, `doctor`, `new`, `dev`, `run`, `trace`, `replay`, `inspect`, `fork`, `dst`, `eval`, `jobs`, `abort`, `memory`, `sessions`, `debug` and `factory` |
+| Sign-in command | `receipt setup` | `receipt login` |
+| `--version` | Prints the build version | Not a command — it falls through to `Unknown command '--version'` |
+| Documented in | This tab | [The in-repo developer CLI](/repo/in-repo-cli) |
+
+Both binaries use the same session store, `~/.receipt/session.json` by default.
+
+Next step: [install the released binary](/cli/install).

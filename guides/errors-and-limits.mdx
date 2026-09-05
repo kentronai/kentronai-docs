@@ -1,0 +1,98 @@
+---
+title: "Errors and limits"
+description: "Every user-visible chat error, quoted exactly as it appears, with what it means and what to do about it."
+---
+
+This page exists so you can search for the exact text you saw. Every message below is quoted verbatim from Receipt — if what's in front of you doesn't match one of these strings exactly, it's a different error than the one you're thinking of.
+
+## Access and session
+
+| Message | Meaning | What to do |
+|---|---|---|
+| `Please sign in and try again.` | You're not authenticated for this action. | Sign in again and retry. |
+| `Your request was invalid. Refresh and try again.` | The request didn't match what the server expected. | Refresh the page and try again. |
+| `This chat thread could not be found.` | The thread id no longer resolves to a thread you can reach. | Return to chat history and reopen the thread from there. |
+| `You do not have access to this chat thread.` | The thread exists, but not for the account or organization you're currently signed in as. | Switch to the right account or organization and retry. |
+| `This chat changed in another tab or session. Refresh and try again.` | Your branch version and the thread's real version couldn't be reconciled automatically. | Refresh and retry the action. |
+| `This message can no longer be edited. Refresh and try again.` | The message is no longer on the canonical path, or is otherwise stale. | Refresh to reload the current branch before editing again. |
+
+## Model and provider
+
+| Message | Meaning | What to do |
+|---|---|---|
+| `The selected AI model is not allowed for your organization.` | Your organization's model policy blocks this model. | Choose an allowed model, or ask an admin to allow this one. |
+| `This model requires a paid plan to use.` | The copy for a plan-restricted model. | See the note below — this message currently can't occur. |
+| `This provider requires an organization API key, but no key is configured.` | This model's provider needs your organization's own API key (BYOK), and none is set. | Add a provider key in BYOK settings, or use a model from a provider that doesn't need one. |
+| `Unable to connect to the AI service. Verify that your organization OpenAI API key is valid.` | Your organization's configured key was rejected by the provider. | Check and, if needed, replace the key in BYOK settings. |
+| `This model cannot be used with your organization provider API key. Choose another model from that provider or remove the provider key.` | The configured provider key doesn't cover this specific model. | Pick a different model from that provider, or remove the key. |
+
+<Note>
+Like the two plan-gating messages later on this page, `This model requires a paid plan to use.` runs through the same no-paywall contract: the check that decides whether a model is locked to a plan (`getModelAccess`) currently returns "allowed" for every model regardless of plan, and no model is locked in the model picker today. So this message can't currently appear either.
+</Note>
+
+## The context limit
+
+Receipt words the context-limit condition slightly differently depending on where it's telling you about it — treat all three as the same underlying limit.
+
+| Where you see it | Exact text |
+|---|---|
+| Standard chat message | `This conversation has reached its current context limit ({maxTokens} tokens). Start a new chat to continue.` |
+| Composer inline banner | `This conversation has reached its current context limit. Start a new chat to continue.` |
+| Server (no token count) | `This conversation has reached the current context limit.` |
+
+When the model has a larger **Max** context window available to switch into, the wording changes instead:
+
+| Where you see it | Exact text |
+|---|---|
+| Standard chat message | `This conversation has reached the standard context limit ({maxTokens} tokens). Switch to Max to continue with the larger window.` |
+| Composer inline banner | `This conversation has reached the standard context limit. Switch to Max to continue with the larger window.` |
+| Server (no token count) | `This conversation has reached the standard context limit. Switch to Max to continue with the larger window.` |
+
+What to do either way: start a new chat, or switch to **Max** if that control is available on the model you're using.
+
+## Rate limits, quota, and credit
+
+| Message | Meaning | What to do |
+|---|---|---|
+| `Too many requests. Please wait about {retryAfterSeconds} seconds and retry.` | You've hit the rate limit. | Wait the stated number of seconds, then retry. |
+| `This seat has exhausted its current AI usage allowance. Please wait until the monthly reset and try again.` | Your seat has used its metered allowance for this billing cycle. | Wait for the reset, or talk to an admin about the plan. |
+| `Your free chat allowance is exhausted for now. Upgrade for more access or wait and try again.` | A free-tier allowance has run out. | See the note below — this message currently can't occur. |
+| `Your $5 platform credit has been used. Add an optional provider key in Billing & Credits to continue without platform credit.` | The one-time platform credit is spent. | Add an organization provider key in Billing & Credits, or wait for a plan-based allowance. |
+
+<Note>
+Rate limiting is a **60-second window, 30 requests**. There's a separate, more restrictive free-tier rate limit and allowance defined in the product, but the check that would route a request onto that free-tier path currently always returns false — so every request is evaluated against the 30-requests-per-60-seconds limit above, and the free-allowance-exhausted message can't currently appear.
+</Note>
+
+## Server and stream failures
+
+| Message | Meaning | What to do |
+|---|---|---|
+| `The AI provider is currently unavailable. Please retry.` | The model provider itself is having trouble. | Retry in a moment. |
+| `A tool failed while processing your request.` | A tool call failed mid-turn. | Retry the request. |
+| `Your message could not be saved. Please retry.` | The message couldn't be persisted. | Retry sending it. |
+| `The response stream failed. Please retry.` | The streaming response was interrupted. | Retry the request. |
+| `We ran into a server problem while generating your response. Please try again in a few moments.` | Generic fallback for an unclassified server error. | Try again shortly. |
+
+You may also see one of these non-templated variants of the same kinds of failure: `Something went wrong on our side while generating the response. Please try again.` or `The assistant response failed while streaming. Please retry.`
+
+## File uploads
+
+| Message | Meaning | What to do |
+|---|---|---|
+| `File uploads are available on paid plans only. Upgrade to attach files in chat.` | The plan-gate copy for file uploads. | See the note below. |
+
+<Note>
+As covered on [Files and attachments](/guides/files-and-attachments), file uploads are not actually plan-gated in this release — the check behind this message currently always allows the upload, so you shouldn't see it in practice.
+</Note>
+
+## Route-level failures
+
+A small set of failures can happen before Receipt has even built its normal error response, so they don't carry the richer error details the messages above do. If you see one of these, it's usually a sign that something more fundamental — your session, your request body, or your organization context — didn't check out:
+
+`Unauthorized`, `Organization context is required`, `Invalid JSON body`, `Validation failed`, `Failed to resolve access policy`, `Workspace is unavailable`.
+
+## The TraceID
+
+Whenever an error carries a server-issued request id, the error banner shows a **Show TraceID** control you can expand to reveal a copyable trace identifier. If you're reporting a problem, copying and including that TraceID gives whoever investigates it a precise anchor into the request that failed.
+
+Next step: [find the monitoring surfaces Receipt doesn't put in its sidebar](/guides/monitoring-your-runs).
