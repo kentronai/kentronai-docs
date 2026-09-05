@@ -42,10 +42,12 @@ const SKIP = new Set([
   'docs', 'research', 'scripts',
   'logo', 'public', 'images', 'snippets',
 ])
+// Repository documentation, not site content; also listed in .mintignore.
+const SKIP_FILES = new Set(['README.md'])
 const files = []
 const walk = (dir) => {
   for (const entry of readdirSync(dir)) {
-    if (SKIP.has(entry)) continue
+    if (SKIP.has(entry) || SKIP_FILES.has(entry)) continue
     const full = join(dir, entry)
     if (statSync(full).isDirectory()) walk(full)
     else if (/\.mdx?$/.test(entry)) files.push(relative(ROOT, full))
