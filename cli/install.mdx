@@ -1,23 +1,31 @@
 ---
 title: "Install the CLI"
-description: "Install the released receipt binary, and supply the gateway host it needs before the first sign-in."
+description: "Install the released receipt binary and confirm it can reach the hosted Kentron gateway before you sign in."
 ---
 
-The released `receipt` CLI is a single compiled binary. Install it with the script below, then tell it which Receipt host to talk to — that second step is not optional, and skipping it is the most common reason a first `receipt setup` fails.
+The released `receipt` CLI is a single compiled binary that ships with the hosted origin `https://app.kentron.ai` baked in, so on the hosted app there is nothing to configure — install it and sign in.
 
 ## Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/kentronai/receipt-cli/main/install.sh | bash
-export PATH="$HOME/.local/bin:$PATH"
-receipt --version
 ```
 
-The `export` line is only needed if the install directory is not already on your `PATH`; the installer tells you when that is the case, printing `Add ~/.local/bin to PATH to run 'receipt' from any shell.` after `Installed receipt CLI at …`. Add it to your shell profile to make it stick.
+The installer drops one executable, `receipt`, into `~/.local/bin`. If that directory is not already on your `PATH`, the script prints the exact line to add — add it to your shell profile to make it stick:
 
-<Note>
-This distribution location may change. If the URL above does not resolve, get the current one from whoever operates your Receipt deployment rather than guessing at a replacement.
-</Note>
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+## Quick start
+
+```bash
+receipt --version            # confirm the binary is on your PATH
+receipt doctor               # check the CLI can reach the gateway (read-only, no sign-in)
+receipt setup                # sign in through your browser and see the connector catalog
+receipt workspace current    # show the workspace this session is bound to
+receipt mcp install codex    # wire your Receipt tools into the Codex MCP client
+```
 
 ## What the installer does
 
@@ -32,6 +40,10 @@ Environment variables the installer reads: `RECEIPT_CLI_VERSION` pins a specific
 curl -fsSL https://raw.githubusercontent.com/kentronai/receipt-cli/main/install.sh | RECEIPT_CLI_VERSION=<release-tag> bash
 ```
 
+<Note>
+The binary is compiled with dotenv and bunfig autoload disabled, so a stray `.env` or `bunfig.toml` in your working directory cannot change which host the CLI talks to. The endpoint is resolved from the baked-in default and the overrides described below, never from a local file.
+</Note>
+
 ## Supported platforms
 
 macOS and Linux, on arm64 and x64. Anything else stops with `Unsupported OS` or `Unsupported architecture`.
@@ -42,17 +54,21 @@ There is no Windows build, and no npm or Homebrew distribution — the installer
 The installer does not install the Claude observer companion binary, even when a release archive bundles one. That is why `receipt setup` can report the observer as not installed on a freshly installed CLI — see [Observing Claude Code](/cli/observe-claude-code).
 </Note>
 
-## Point the CLI at your Receipt host
+## Verify your install
 
-<Warning>
-The released binary has no gateway URL compiled into it. On a fresh machine with no environment set, a plain `receipt setup` fails with:
+Before you sign in, run `receipt doctor`. It is read-only — it never opens a browser and never prints a token — so it is the safest way to confirm the CLI is wired up:
 
-`receipt connect production URL is not configured yet. Set RECEIPT_CONNECT_PUBLIC_GATEWAY_URL, RECEIPT_CONNECT_PROD_GATEWAY_URL, RECEIPT_CONNECT_PROD_URL, or RECEIPT_CONNECT_URL.`
+```bash
+receipt doctor
+```
 
-The binary's own help text says the default endpoint "Uses the hosted Receipt gateway". It does not — there is no hosted default in the binary, and the host has to come from you.
-</Warning>
+On a fresh hosted install it resolves the endpoint, probes the gateway health and the sign-in URL, and reports that no session is saved yet, ending with `Run 'receipt setup' to sign in.` Add `--json` for a machine-readable envelope. [Check your install with receipt doctor](/cli/doctor) covers the full output and exit codes.
 
-Supply it either as an environment variable, which every later command in that shell inherits:
+## Dev or self-hosted deployments
+
+Skip this section on the hosted app — the baked-in origin already points at `https://app.kentron.ai`. You only need an override when you run against a self-hosted deployment or a local stack.
+
+Point the CLI at a different gateway either as an environment variable, which every later command in that shell inherits:
 
 ```bash
 export RECEIPT_CONNECT_PUBLIC_GATEWAY_URL=https://<your-receipt-host>
@@ -65,8 +81,15 @@ or as a flag on the command itself:
 receipt setup --server-url https://<your-receipt-host>
 ```
 
-The two are not identical. The environment-variable form produces a `prod` session; `--server-url` produces a `custom` session, which writes no per-target session file. [Signing in](/cli/setup) covers what that difference means for the files on disk.
+The two are not identical. The environment-variable form produces a `prod` session; `--server-url` produces a `custom` session, which writes no per-target session file. [Signing in](/cli/setup) covers what that difference means for the files on disk. When the web sign-in origin differs from the gateway, set it with `--auth-url`.
 
-Whichever form you use, the host you give must serve both halves of the flow: the web application path `/api/receipt-connect/cli-login`, where you approve the sign-in in a browser, and the gateway path `/connect/*`, where every later command sends its requests. When the host you supplied is not serving the web application, sign-in never gets started and the CLI reports `receipt connect device login failed to start: http_404` — ask whoever operates your deployment which host fronts both paths, or point the login half somewhere else with `--auth-url`.
+For a local stack, use the built-in `local` target instead:
+
+```bash
+receipt --target local doctor
+receipt setup --target local
+```
+
+It defaults to gateway `http://127.0.0.1:8787` and auth `http://127.0.0.1:3000`. Override those with `RECEIPT_CONNECT_LOCAL_SERVER_URL` and `RECEIPT_CONNECT_LOCAL_AUTH_URL`. The auth URL must be the exact origin your browser uses, because the device-approval page needs your Better Auth cookie.
 
 Next step: [sign in with receipt setup](/cli/setup).

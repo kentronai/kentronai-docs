@@ -3,22 +3,22 @@ title: "Signing in with receipt setup"
 description: "What receipt setup does and does not do, the browser device login step by step, and the session file and twelve-hour token it leaves behind."
 ---
 
-`receipt setup` is how you sign the released CLI in. It is also reachable as `receipt connect setup`, `receipt connect doctor` and `receipt connect check` — all four run the same code.
+`receipt setup` is how you sign the released CLI in. It is also reachable as `receipt connect setup`. The similarly named `receipt connect doctor` and `receipt connect check` no longer run setup — they run the read-only [`receipt doctor`](/cli/doctor), which resolves your endpoint and reports the saved session without ever opening a browser.
 
 ## What it actually does
 
 Exactly two things, in order:
 
-1. **Signs you in.** It resolves which host to talk to, reuses a saved session if one matches, and otherwise runs the browser device login below and writes a new session file.
+1. **Signs you in.** It resolves which host to talk to, reuses a saved session if one matches and is still valid, and otherwise runs the browser device login below and writes a new session file.
 2. **Installs the Claude observer**, but only when the companion binary can be found. If it cannot, the step is reported as skipped with the reason — it is not an error and it does not stop sign-in.
 
 Then it prints your account line, the connector catalog, and the observer state.
 
 <Warning>
-`receipt setup` does **not** start provider onboarding. The Receipt repository's own `docs/receipt-cli.md` says it "starts the guided onboarding flow for the selected workspace"; the shipped code does not. Onboarding a provider is [`receipt connect`](/cli/connect).
+`receipt setup` does **not** start provider onboarding. It signs you in and installs the observer, nothing more. Onboarding a provider is [`receipt connect`](/cli/connect).
 </Warning>
 
-Before the first run, the CLI needs to know which host to sign in against — see [Install the CLI](/cli/install), because a plain `receipt setup` on a fresh machine fails with `receipt connect production URL is not configured yet.`
+For the hosted app there is nothing to configure — the binary resolves `https://app.kentron.ai` on its own, so a plain `receipt setup` on a fresh machine signs you straight in. You only pass a host when you are pointing at a dev or self-hosted origin; see [Install the CLI](/cli/install).
 
 ## Flags
 
@@ -35,7 +35,7 @@ The web origin that hosts the browser sign-in page, when it is not the same host
 </ParamField>
 
 <ParamField path="--fresh-login" type="boolean" default="false">
-Ignore any saved session and run the device login again. This is the fix for an expired token.
+Ignore any saved session and run the device login again. `setup` now detects an expired token on its own and re-runs the login for you, so you mainly need this to force a re-login while a token is still technically valid — for example when the gateway has rejected it.
 </ParamField>
 
 <ParamField path="--no-login" type="boolean" default="false">
@@ -62,7 +62,15 @@ Observer flags such as `--proxy-bin <path>`, `--mode` and `--event-log` are pass
 
 ## Session reuse
 
-If a session already exists for the target, `--fresh-login` was not passed, and the saved `gatewayUrl` matches the host you resolved to — `localhost` and `127.0.0.1` count as the same — the existing session is reused and no browser opens. Everything else runs the full device login.
+`setup` reuses the saved session for the target — no browser opens — only when **all three** of these hold:
+
+- `--fresh-login` was not passed,
+- the saved `gatewayUrl` matches the host you resolved to (`localhost` and `127.0.0.1` count as the same), and
+- the saved token has **not** expired.
+
+If the token has expired, `setup` does not reuse it. It runs the full device login and writes a fresh session — you no longer end up carrying a dead token forward. Any other mismatch (a different host, or no saved session at all) also runs the full login.
+
+Whichever way it resolves, the session for the target you set up is promoted to the active `~/.receipt/session.json`. So the most recent `setup` wins: `receipt setup --target local` and then `receipt setup` flips which environment [`receipt mcp`](/cli/tools-and-mcp), [`receipt workspace`](/cli/workspaces) and [`receipt tools`](/cli/tools-and-mcp) talk to — even when the later setup reused a still-valid saved session rather than signing in again.
 
 ## The browser device login, step by step
 
@@ -136,7 +144,7 @@ The session file is not secret-free. It stores a live bearer token in the clear,
 
 A file missing `gatewayUrl`, `token` or `organizationId`, or one that will not parse, is treated as no session at all rather than as an error.
 
-There is no logout command in this binary. To sign out, delete these files yourself.
+To sign out, run [`receipt logout`](/cli/overview) — it deletes the active `session.json` and its matching per-target file, and prints `receipt logout: not signed in` when there was nothing to remove. Deleting the files by hand still works too.
 
 ## The token: twelve hours, three scopes, one workspace
 
@@ -147,7 +155,7 @@ The token the login returns is a JWT that:
 - Is bound at login to the organization's **Default** workspace — always. You cannot choose a different workspace during sign-in; approving in the browser picks the organization, not the workspace. Changing workspace afterwards is [`receipt workspace use`](/cli/workspaces).
 
 <Warning>
-Nothing in the CLI checks whether the token has expired. Twelve hours after signing in, every gateway call starts failing with `unauthorized`, while `receipt setup` still finds the saved session and reports it as reused — so it looks like you are signed in and nothing is wrong. When calls fail with `unauthorized` and setup says the session was reused, the token is stale. Run `receipt setup --fresh-login`.
+The token is good for 12 hours. Once it expires, gateway calls fail with `unauthorized` — but `setup` no longer papers over that: it detects the expired token and re-runs the browser login for you, so signing in again is just `receipt setup`. To force a re-login before expiry (for example if the gateway has already started rejecting the token), run `receipt setup --fresh-login`.
 </Warning>
 
 `setup` also exports the session's values — gateway URL, token, organization, workspace and user id — as environment variables into its own process, and only its own process. They are not exported to your shell.
@@ -163,10 +171,10 @@ Receipt Connect connectors:
 Claude observer: not installed (Unable to find the Claude observer companion binary. Install a Receipt CLI release that bundles receipt-claude-proxy, or pass --proxy-bin <path> / set RECEIPT_CLAUDE_PROXY_BIN.)
 ```
 
-The connector list is the whole catalog — 62 entries — not the connectors you have connected. To see actual connections, use `receipt connect status`.
+The connector list is the whole catalog, not the connectors you have connected. To see actual connections, use `receipt connect status`.
 
 The observer line reads `Claude observer: installed (<platform> <serviceFile>)` when the companion binary was found and the background service installed.
 
 With `--json` you get the same information as one envelope: `ok`, a `receiptAccount` object (including whether the session was `reused` or `skipped`, the target, gateway URL, identity fields, and the session file paths), the full `connectors` catalog, and `claudeObserver`.
 
-Next step: [switch the workspace your session is bound to](/cli/workspaces).
+Next step: [check your setup with receipt doctor](/cli/doctor).

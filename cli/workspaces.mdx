@@ -12,11 +12,11 @@ Your CLI session carries a token bound to exactly one workspace. Every other com
 `receipt workspace` requires a saved session. Unlike `receipt tools`, it does **not** accept environment credentials. Signed out, it fails with:
 
 ```
-receipt workspace: not signed in; run 'receipt login' first
+receipt workspace: not signed in; run 'receipt setup' first
 ```
 
 <Note>
-There is no `receipt login` on this binary. The command that signs you in is [`receipt setup`](/cli/setup). This error string is shared with another program and was not updated for the released CLI.
+The command that signs you in is [`receipt setup`](/cli/setup). Run it once, then come back to `receipt workspace`.
 </Note>
 
 All requests go to `<gatewayUrl>/connect/workspaces` with a 35-second timeout.
@@ -126,7 +126,7 @@ Server errors surface verbatim, so you can search on the text you saw:
 - `receipt_workspace_unavailable` (503)
 
 <Tip>
-If `receipt tools list` shows fewer tools than you expected, check `receipt workspace current` first. `receipt tools list`, `receipt tools call` and `receipt mcp config` all read the workspace bound into your saved session. `receipt connect status` does not: it signs in again through the browser and always reports the Default workspace's connections, which is why the two can disagree.
+If `receipt tools list` shows fewer tools than you expected, check `receipt workspace current` first. `receipt tools list`, `receipt tools call` and `receipt mcp config` all read the workspace bound into your saved session. `receipt connect status` does not: it always reports the Default workspace's connections, which is why the two can disagree.
 </Tip>
 
 Next step: [connect a provider from the terminal](/cli/connect).
