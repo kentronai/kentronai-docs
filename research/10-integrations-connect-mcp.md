@@ -1591,7 +1591,7 @@ answered.
 - **Default local Nango secrets** in `docker-compose.local.yml:30-32`
   (`LOCAL_NANGO_ENCRYPTION_KEY` default, dashboard `receipt`/`receipt`). Safe to mention as
   "local defaults exist" but do not print the values as if they were guidance.
-- **The Receipt CLI install URL** `https://raw.githubusercontent.com/skishore23/receipt-cli/main/install.sh`
+- **The Receipt CLI install URL** `https://raw.githubusercontent.com/kentronai/receipt-cli/main/install.sh`
   (`packages/receipt-app/src/cli/shared.ts:175`) points at a personal GitHub account;
   confirm the canonical distribution URL before publishing it.
 

@@ -430,7 +430,7 @@ Per-provider runtime notes (from `docs/receipt-cli.md:176-196`, confirmed by `li
 
 ## 11. Installer and distribution
 
-**Public installer** (`https://raw.githubusercontent.com/skishore23/receipt-cli/main/install.sh`, fetched 2026-09-05; copy in `scratchpad/research/public-install.sh`):
+**Public installer** (`https://raw.githubusercontent.com/kentronai/receipt-cli/main/install.sh`, fetched 2026-09-05; copy in `scratchpad/research/public-install.sh`):
 
 - `RECEIPT_CLI_VERSION` default `v0.1.0-preview.6`; `RECEIPT_CLI_REPO` default `skishore23/receipt-cli`; `RECEIPT_CLI_BIN_DIR` default `~/.local/bin`; `RECEIPT_CLI_BIN` default `$RECEIPT_CLI_BIN_DIR/receipt`.
 - Requires `curl`, `tar`, and `shasum` or `sha256sum`. Platforms: Darwin/Linux × arm64(aarch64)/x64(amd64); others → `Unsupported OS`/`Unsupported architecture`. No Windows, npm, or Homebrew.
@@ -467,7 +467,7 @@ The interactive menu bug (§8.1), the missing help for `tools|mcp|workspace`, th
 ## 13. Recommended first-run sequence that works with the shipped binary today
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/skishore23/receipt-cli/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/kentronai/receipt-cli/main/install.sh | bash
 export PATH="$HOME/.local/bin:$PATH"
 receipt --version                                   # receipt v0.1.0-preview.6
 export RECEIPT_CONNECT_PUBLIC_GATEWAY_URL=https://app.kentron.ai   # or: receipt setup --server-url https://app.kentron.ai

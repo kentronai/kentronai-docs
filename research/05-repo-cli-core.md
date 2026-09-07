@@ -1279,7 +1279,7 @@ Worker/debug commands:
 `printConnectUsage()` also documents the distribution channel (`shared.ts:176-178`):
 ```
 Distribution:
-  curl -fsSL https://raw.githubusercontent.com/skishore23/receipt-cli/main/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/kentronai/receipt-cli/main/install.sh | bash
   See docs/receipt-cli.md for the full public release process.
 ```
 

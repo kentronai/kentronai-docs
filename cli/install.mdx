@@ -8,7 +8,7 @@ The released `receipt` CLI is a single compiled binary. Install it with the scri
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/skishore23/receipt-cli/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/kentronai/receipt-cli/main/install.sh | bash
 export PATH="$HOME/.local/bin:$PATH"
 receipt --version
 ```
@@ -29,7 +29,7 @@ This distribution location may change. If the URL above does not resolve, get th
 Environment variables the installer reads: `RECEIPT_CLI_VERSION` pins a specific release tag instead of the default the script carries, `RECEIPT_CLI_BIN_DIR` changes the install directory, `RECEIPT_CLI_BIN` sets the exact destination path, and `RECEIPT_CLI_REPO` points at a different release repository. The script reads them from the environment of the shell that runs it, so in a piped install the assignment goes on `bash`, not on `curl`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/skishore23/receipt-cli/main/install.sh | RECEIPT_CLI_VERSION=<release-tag> bash
+curl -fsSL https://raw.githubusercontent.com/kentronai/receipt-cli/main/install.sh | RECEIPT_CLI_VERSION=<release-tag> bash
 ```
 
 ## Supported platforms
