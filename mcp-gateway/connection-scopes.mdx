@@ -64,7 +64,7 @@ Connect the app in both places if you need it in both places.
 
 ## Why it works this way
 
-The reason is recorded in the code, and it is a deliberate choice rather than an oversight. Global integrations are what Receipt chat uses, and chat runs with no workspace selected. They previously resolved to the organization's Default workspace — which meant that connecting an app for chat also connected it for whoever was using Default with an MCP client, and the reverse. Those are different audiences, so the global scope became its own row: the same shape as a workspace, so every connection path keeps working unchanged, but never the Default one and never listed among the workspaces people pick between.
+The reason is recorded in the code, and it is a deliberate choice rather than an oversight. Global Integrations are what Receipt chat uses, and chat runs with no workspace selected. They previously resolved to the organization's Default workspace — which meant that connecting an app for chat also connected it for whoever was using Default with an MCP client, and the reverse. Those are different audiences, so the Global scope became its own row: the same shape as a workspace, so every connection path keeps working unchanged, but never the Default one and never listed among the workspaces people pick between.
 
 <Note>
 Older connections that carry only an organization tag and no workspace are read-repaired into the **Global** scope, not into Default. They powered organization-wide chat, so Global is where they belong.

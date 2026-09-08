@@ -6,12 +6,12 @@ description: "Read one workspace's tool traffic on its Gateway activity dashboar
 Every MCP Gateway workspace has a **Gateway activity** dashboard of its own: how many tool calls ran in the last day, week or month, how many succeeded, how long they took, which actors made them, and every individual call with its status and duration. A second, smaller **Activity** page in the same workspace covers a different subject — connection lifecycle events — and says so itself.
 
 <Warning>
-**Tool calls made through the MCP bridge are not recorded, so they never reach this dashboard.** `POST /connect/mcp` — the endpoint behind `receipt mcp serve`, and behind `receipt tools call` without `--connection` — writes no `tool.called` or `tool.observed` receipt. Calls through `POST /connect/call` do: `receipt connect call` and `receipt tools call --connection`, including when a background run runs them inside its sandbox. A quiet dashboard beside a busy MCP client session is this gap, not a fault. See [the aggregate server](/mcp-gateway/aggregate-server).
+**Tool calls made through the MCP bridge are not yet recorded as receipts, so they never reach this dashboard.** `POST /connect/mcp` — the endpoint behind `receipt mcp serve`, and behind `receipt tools call` without `--connection` — writes no `tool.called` or `tool.observed` receipt. Calls through `POST /connect/call` do: `receipt connect call` and `receipt tools call --connection`, including when a background run runs them inside its sandbox. A quiet dashboard beside a busy MCP client session is this gap, not a fault. See [the aggregate server](/mcp-gateway/aggregate-server).
 </Warning>
 
 ## Where to find it
 
-Open **MCP Gateway → Workspaces**, select a workspace, and choose **Dashboard** — the last entry in the **Workspace tools** tab strip on its Overview, alongside Open integrations, LLM keys and Settings.
+Open **MCP Gateway → Workspaces**, select a workspace, and choose **Dashboard** — the last entry in the workspace tab strip on its Overview, alongside Open integrations, LLM keys and Settings.
 
 The workspace id sits in the path and the tab and range are search parameters, so a refresh, the back button or a link you paste to a colleague reopens the same view. Both parameters are optional and take a fixed set of values — `dashboard`, `users` or `team-usage` for the tab, `24h`, `7d` or `30d` for the range — and a link that leaves them off opens the Dashboard tab over the last 24 hours. There is no organization-wide version. The organization-level dashboard address redirects to the Workspaces page, because every figure here describes one workspace and a page with no workspace open could not say which.
 
@@ -48,7 +48,7 @@ A delta line appears only when there is something truthful to say. When a metric
 
 ## The Users tab
 
-Three tiles — **Requests**, **Total tokens used** and **Total spend** — each sub-labelled **Across the organization**. They come from the organization's agent-run records rather than from gateway receipts: an MCP tool call consumes no tokens itself, the agent that decided to make it does. They follow the range you selected, but they never narrow to one workspace.
+Three tiles — **Requests**, **Total tokens used** and **Total spend** — each sub-labelled **Across the organization**. They come from the organization's agent-run records rather than from gateway receipts: an MCP tool call consumes no tokens itself, the agent that decided to make it does. They follow the range you selected, but they never narrow to one workspace; for the spend figures themselves, and for what is recorded per model call, see [Usage and spend](/llm-gateway/usage-and-spend).
 
 Below them is one row per actor, ranked by request count, with columns **User**, **Requests**, **Tools used** (distinct tools reached for, not a repeat of the request count), **Failed** and **Last seen**. Before anything has run it reads `No one has used this gateway yet. People and agents appear here once they make a request.`
 

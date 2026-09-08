@@ -3,9 +3,9 @@ title: "Postgres, migrations, and the sync publication"
 description: "Postgres is Receipt's only store, and a table reaches the browser only when it belongs to the zero_data replication publication — so get the version, the migration order and the publication membership right."
 ---
 
-One forward-only command migrates a Receipt database: `./bunw run --cwd apps/start zero:migrate`. It is safe against a live stack: idempotent, and advisory-locked so two concurrent deploys cannot race each other through it. This page covers what your Postgres has to be before that command works, what the runner does, and the single membership rule that decides whether your UI shows any data at all.
+Receipt stores everything in one Postgres database — accounts, organizations, receipts and every projection built from them. The layer that keeps a browser current, Zero, does not read those tables over HTTP; it **replicates them out of Postgres over logical replication** and serves the replica to browsers. That one fact drives every requirement below.
 
-Receipt stores everything in Postgres. The client sync layer — Zero — does not read your tables over HTTP; it **replicates them out of Postgres over logical replication** and serves the replica to browsers. That one fact drives every requirement below.
+Migrating that database is a single forward-only command, `./bunw run --cwd apps/start zero:migrate`, and it is safe against a live stack: idempotent, and advisory-locked so two concurrent deploys cannot race each other through it. This page covers what your Postgres has to be before that command works, what the runner does, and the single membership rule that decides whether your UI shows any data at all.
 
 ## What Postgres has to be
 

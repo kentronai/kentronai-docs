@@ -12,11 +12,11 @@ Everything here is the released `receipt` binary. The in-repo developer CLI is a
 | Convention | Behaviour |
 |---|---|
 | Exit codes | `0` on success, `1` on any failure. Nothing else comes from the CLI itself. |
-| Streams | Results and progress lines go to stdout; only the final error message goes to stderr. |
+| Streams | Results and progress lines go to stdout; error messages go to stderr. |
 | `connect` prefix | Optional on the connect commands: `receipt status` and `receipt connect status` are the same command, and so are `receipt setup` and `receipt connect setup`. |
 | `--json` | Means three different things. Output switch for `doctor`, `setup`, `login`, `workspace`, `connect list` and `mcp config`; the **tool-argument payload** for `tools call` and `connect call`; ignored by `import` and `observe`, which always emit JSON. |
 | The token | Never printed by any command. `doctor` shows the expiry, not the JWT. |
-| Boolean flags | Three different argument parsers are in play, and the one used by `setup`, `login`, `doctor`, `connect`, `import` and `observe` lets a bare boolean swallow the next word. Put boolean flags last, or write `--open=false`. See [the parsing rules](/cli/overview). |
+| Boolean flags | Three argument parsers are in play. Two of them let a bare boolean swallow the next word: the one behind `setup`, `login`, `doctor`, `connect`, `import` and `observe`, and the one behind `tools`, `mcp` and `connect list\|tools\|call`. Put boolean flags last, or write `--open=false`. `receipt workspace` uses the third, which drops any flag it does not know. See [the parsing rules](/cli/overview). |
 
 <Note>
 Scripts should parse the `--json` forms rather than the text output. `setup --json` and `login --json` also suppress the `Step 1 of 2` progress lines; `connect status` and `connect <provider>` still print them when a fresh sign-in happens first.
@@ -40,7 +40,7 @@ receipt --version           # also: receipt -V
 **Bare `receipt` is not a help screen — it signs you in.** With no arguments it resolves the hosted endpoint and opens a browser device login, then prompts for a provider. On a non-interactive shell the menu silently picks the first entry, `AWS`. `receipt --help extra` does the same thing, because the parser reads `extra` as the value of `--help`.
 </Warning>
 
-`--version` and `-V` are recognised only as the **sole** argument. `receipt tools --help`, `receipt mcp --help` and `receipt workspace --help` never print help either: those words are claimed by their own handlers first. Signed out they fail with `receipt mcp: not signed in; run 'receipt setup' first` (that same `receipt mcp:` prefix appears for `tools`) or `receipt workspace: not signed in; run 'receipt setup' first`. Signed in, `mcp --help` runs `mcp status codex`, `tools --help` runs `tools list`, and `workspace --help` fails with `receipt workspace supports list, current, create, rename, use, and delete`.
+`--version` and `-V` are recognised only as the **sole** argument. `receipt tools --help`, `receipt mcp --help` and `receipt workspace --help` never print help either — their handlers are matched before the help check, so each runs its default subcommand or fails with a not-signed-in error instead. [The parsing rules](/cli/overview) give the dispatch order and the exact messages.
 
 ## Session: setup, login, logout, doctor
 
@@ -53,14 +53,14 @@ receipt doctor [--target prod|dev|local|<url>] [--json]
 
 | Flag | Applies to | Default | Effect |
 |---|---|---|---|
-| `--target <t>` | all four | `prod` | Endpoint to use. An `http(s)` value produces a `custom` target; any other word fails with `receipt connect target must be prod, dev, local, or an http(s) URL`, even when `--server-url` is also given. |
+| `--target <t>` | `setup`, `login`, `doctor` | `prod` | Endpoint to use. An `http(s)` value produces a `custom` target; any other word fails with `receipt connect target must be prod, dev, local, or an http(s) URL`, even when `--server-url` is also given. |
 | `--server-url <url>` | `setup`, `login`, `doctor` | — | Gateway override; always produces a `custom` session. |
 | `--auth-url <url>` | `setup`, `login`, `doctor` | — | Web origin that serves the sign-in page, when it differs from the gateway. |
 | `--fresh-login` | `setup`, `login` | off | Ignore the saved session and run the device login again. |
 | `--no-login` | `setup`, `login` | off | Skip sign-in. Aliases `--skip-login`, `--local-only`. |
 | `--no-claude` | `setup` | off | Skip the Claude observer install. Aliases `--no-observer`, `--no-background`, `--skip-claude`. |
 | `--no-open` | `setup`, `login` | off | Print the sign-in URL instead of opening a browser. `--open=false` and `RECEIPT_CONNECT_OPEN_BROWSER=0` do the same. |
-| `--json` | all four | off | Structured envelope instead of the status lines. |
+| `--json` | `setup`, `login`, `doctor` | off | Structured envelope instead of the status lines. |
 
 `login` takes an optional **positional** target, so `receipt login local` and `receipt login --target local` are the same. `doctor` does not: a positional there is ignored, and only `--target` counts. `logout` reads no flags at all — it always acts on whichever session is active.
 
@@ -103,7 +103,7 @@ receipt workspace delete <workspace> [--json]
 | `use` | `<name> (<id>)` | `ok`, `workspace`, plus `sessionFile` and `targetSessionFile` |
 | `delete` | `Deleted workspace <id>` | `ok`, `deleted`, `workspaceId` |
 
-`use` is the only command that replaces the session's token. Anything else in the list is `receipt workspace supports list, current, create, rename, use, and delete`. See [Switching workspaces](/cli/workspaces).
+`use` is the only command you run to replace the session's token; `current`, `list` and `identity` also mint one, but only when the workspace saved in the session no longer exists. Anything else in the list is `receipt workspace supports list, current, create, rename, use, and delete`. See [Switching workspaces](/cli/workspaces).
 
 ## Tools
 
@@ -135,7 +135,7 @@ Identity here resolves the saved session **first**, and falls back to `RECEIPT_C
 receipt mcp config [codex|generic] [--output <path>] [--json]
 receipt mcp install codex [--dry-run]
 receipt mcp status codex
-receipt mcp remove codex
+receipt mcp remove codex [--dry-run]
 receipt mcp serve
 ```
 
@@ -144,9 +144,9 @@ receipt mcp serve
 | `--client <name>` | `codex` | Client to generate for. Also accepted as the second positional. |
 | `--name <name>` | `receipt` | Server name written into the client config. |
 | `--output <path>`, `--output-file <path>` | — | Write the config atomically at mode `0600` and print `receipt mcp config: wrote <path>`. Whole-file replace, no merge. |
-| `--dry-run` | off | `install` only. Prints what it would do and changes nothing. |
+| `--dry-run` | off | `install` and `remove`. Prints the plan — `action`, `configPath`, `command` and `launcher` — and changes nothing. |
 | `--client-bin <path>` | `codex` | The client executable to drive. |
-| `--client-config <path>` | Codex's own path | Any other value is refused. |
+| `--client-config <path>` | Codex's own path | A path that resolves anywhere else is refused with `Codex does not accept an arbitrary config path; expected <path>. Set CODEX_HOME before running Receipt if Codex uses another home.` |
 | `--receipt-bin <path>` | the running binary | The command written into the launcher. |
 | `--json` | off | Envelope for `config`. |
 
@@ -170,11 +170,13 @@ receipt connect disconnect [--provider aws] [--name default]   # also: remove, r
 | `--provider <id>` | onboarding, `disconnect` | `aws` for `disconnect` | Connector to act on, skipping the menu. |
 | `--name <name>` | `disconnect` | `default` | Connection name to remove. |
 | `--email <address>` | `<connector-id>` | — | Sent to the provider authorization step as the end-user email. |
-| `--yes`, `--auto-open` | `<connector-id>` | off | Skip the `Press Enter to open …` pause. |
+| `--yes`, `--auto-open` | `<connector-id>` | off | Skip the `Press Enter to open <provider> authorization...` pause. |
 | `--no-wait` | `<connector-id>` | off | Return as soon as the link is open. `--wait=false` does not work. |
 | `--timeout-ms <n>` | `<connector-id>` | `600000` | Polling budget while waiting for the connection to become valid. A non-numeric value silently reverts to the default. |
-| `--no-open` | onboarding, `<connector-id>` | off | Print the authorization link instead of opening it. |
+| `--no-open` | all | off | Print the sign-in or authorization link instead of opening it. |
 | `--fresh-login` | all | off | Sign in again before running the command. |
+
+Once you pick a connector, onboarding hands off to the same code as `receipt connect <connector-id>`, so the `<connector-id>` flags apply to the interactive flow too.
 
 These commands reuse the session saved by `setup`, and if the gateway rejects that token they print `Saved Receipt session was rejected by the gateway; signing in again.`, sign in once and retry. They never read `RECEIPT_CONNECT_TOKEN`.
 
@@ -216,7 +218,7 @@ receipt observe clauden|claude-code [--event-log ~/.claudeN/events.ndjson] [--la
 receipt observe clauden install|start|stop|status|uninstall
 ```
 
-The source word is required and must be exactly `clauden` or `claude-code`; anything else fails with `import source is required. Supported sources: clauden, claude-code` (or `observe source is required. …` for `observe`). `observe` is `import` with following forced on. Service actions are `clauden` only — `observe claude-code supports live file tailing only; use observe clauden install for proxy service install`.
+The source word is required and must be exactly `clauden` or `claude-code`; anything else fails with `import source is required. Supported sources: clauden, claude-code`, or `observe source is required. Supported sources: clauden, claude-code` for `observe`. `observe` is `import` with following forced on. Service actions are `clauden` only — `observe claude-code supports live file tailing only; use observe clauden install for proxy service install`.
 
 | Flag | Default | Effect |
 |---|---|---|
@@ -244,6 +246,6 @@ Both always emit JSON and ignore `--json` as a switch: `ok`, `source`, `importId
 
 `0` and `1` are the whole vocabulary. A device-login failure, a rate limit, a rejected token, a validation error and a failing `doctor` all exit `1` with the message on stderr. Commands that do nothing still succeed: `receipt logout` with no session, `receipt login --no-login`, and `receipt mcp remove codex` when the entry was already absent.
 
-A code you did not expect did not come from the CLI. On macOS an exit of `137` on any command means the operating system killed the binary before it ran — reinstall it with the installer rather than by unpacking an archive by hand. Exit codes and the environment variables that steer all of the above are collected in [Environment and exit codes](/cli/environment-and-exit-codes); the message-by-message fixes are in [CLI troubleshooting](/cli/troubleshooting).
+A code you did not expect did not come from the CLI. The one you are likely to meet is `137` on macOS with no output: the operating system killed the binary before it ran, almost always because that copy is quarantined — read it as a broken copy rather than a CLI error, and reinstall with the published installer. Exit codes and the environment variables that steer all of the above are collected in [Environment and exit codes](/cli/environment-and-exit-codes); the message-by-message fixes, that one included, are in [CLI troubleshooting](/cli/troubleshooting).
 
 Next step: [look up an environment variable or an exit code](/cli/environment-and-exit-codes).

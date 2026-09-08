@@ -11,10 +11,10 @@ Every model call Receipt funds is paid for before it runs. A new hosted organiza
 
 ## The Usage page
 
-Usage lives in organization settings at `/organization/settings/usage`, titled **Usage** and described as "Track your plan usage and model requests." Only owners and admins can open it; a member who reaches the URL is redirected to the app root rather than shown an access-denied screen. It carries no icon in the sidebar rail and no entry in the workspace menu, so you reach it by typing the URL.
+Usage lives in organization settings at `/organization/settings/usage`, titled **Usage** and described as "Track your plan usage and model requests." Only owners and admins can open it; a member who reaches the URL is redirected to the app root rather than shown an access-denied screen. Its **Usage** icon sits below a divider at the bottom of the organization settings rail, directly above **Billing**, apart from the feature areas above them.
 
-<Frame caption="The Usage page. Only the Members tile carries a denominator, and Recorded spend need not match Credit used: spend sums the cost recorded on every request, including turns that used your own provider key, while Credit used is only what the platform credit balance has given up.">
-  <img src="/images/llm-gateway/usage.png" alt="The Usage page on a Free plan: a workspace picker, a Current plan card reading Free with an Active pill, resource tiles reading Workspaces 6, Integrations 0 and Members 1 / 5, headline cards reading Requests this period 39, Total tokens 540,325 and Credit used $0.12, then Credits and spend rows showing Credit remaining $4.88, Recorded spend $0.43 and a top model, and a Token breakdown row." />
+<Frame caption="The Usage page on a Free plan. Only the Members tile carries a denominator, so its ring is the only one with any fill — a short green arc for 1 of 5 seats — while the Workspaces and Integrations rings stay empty whatever they count. Recorded spend need not match Credit used: spend sums the cost recorded on every request, including turns that used your own provider key, while Credit used is only what the platform credit balance has given up.">
+  <img src="/images/llm-gateway/usage.png" alt="The Usage page on a Free plan: a Workspace picker set to Default, a Current plan card reading Free with an Active pill, then a Free plan · Default grid with an Upgrade button holding three tiles — Workspaces 6 and Integrations 0 beside empty grey rings, and Members 1 / 5 beside a ring with a short green arc. Below them, headline cards read Requests this period 39, Total tokens 540,325 and Credit used $0.12, a Credits and spend row reads Credit remaining $4.88, Recorded spend $0.43 and Top model openai/gpt-5.6-luna, and a Token breakdown row reads Input 169,155, Output 20,120, Reasoning 3,977 and Cache-read 5,851." />
 </Frame>
 
 At the top, a **Current plan** card shows the plan name — or "Loading…" — with an **Active** pill. Below it sits a resource grid headed `{plan name} plan · {workspace name}` (or "no workspace"), with an **Upgrade** button that links to Billing.
@@ -98,15 +98,15 @@ Spend refusals are returned before the model call, as HTTP 429 with a retryable 
 | Too many requests | "Too many requests. Please wait about `{retryAfterSeconds}` seconds and retry." |
 
 <Note>
-The credit message points at a page called "Billing & Credits". No page ships under that name — the destination is **Billing**, described on [Billing and plans](/core/billing-and-plans). The full envelope shape and the rest of the chat error table are on [Errors and limits](/co-worker/errors-and-limits).
+The credit message points at a page called "Billing & Credits". No page ships under that name — the destination is **Billing**, described on [Billing and plans](/core/billing-and-plans). The envelope these refusals are returned in is on [Gateway configuration](/llm-gateway/configuration), and every user-visible chat message is quoted on [Errors and limits](/co-worker/errors-and-limits).
 </Note>
 
 ## The request rate limit
 
-Chat is limited to **30 requests per 60-second window, per user**. It is a fixed-window counter in Postgres, keyed on the user and the window start; there is no per-organization limit, no per-key limit, and no `Retry-After` header — the wait hint travels inside the error envelope as `retryAfterSeconds`. The window and the maximum can be changed with `PAID_CHAT_RATE_LIMIT_WINDOW_MS` and `PAID_CHAT_RATE_LIMIT_MAX_REQUESTS`, which must be positive integers or the resolver throws `Expected {NAME} to be a positive integer`.
+Chat is limited to **30 requests per 60-second window, per user**. It is a fixed-window counter in Postgres, keyed on the user and the window start; there is no per-organization limit, no per-key limit, and no `Retry-After` header — the wait hint travels inside the error envelope as `retryAfterSeconds`. The window and the maximum are deployment variables, listed on [Gateway configuration](/llm-gateway/configuration).
 
 <Warning>
-**Setting `VITE_DISABLE_REDIS=true` turns the rate limiter off completely.** The chat runtime swaps in an adapter that always answers "allowed", even though the live limiter is backed by Postgres and does not use Redis at all. The example environment file ships that value, so a deployment copied from it starts with no request limit. The same flag also disables stream resume.
+**Setting `VITE_DISABLE_REDIS=true` turns this limiter off completely, and the cloud environment template ships that value** — so a deployment copied from it starts with no request limit. [Gateway configuration](/llm-gateway/configuration) explains why.
 </Warning>
 
 ## What is recorded for each request

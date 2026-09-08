@@ -3,13 +3,13 @@ title: "Guardrail groups"
 description: "Author, version and test guardrail groups that inspect prompts, responses and tool traffic — and understand why nothing enforces them yet."
 ---
 
+Guardrails are where an owner or admin writes down what should never pass between the organization and a model: credentials, personal data, prompt-injection attempts, internal identifiers, dangerous shell commands or SQL. You collect rules into a group, choose for each one whether it blocks or masks, pick the stages it watches, and rehearse the group against sample text. Every change is a receipt, so "who loosened the secrets rule, and when" stays answerable.
+
 <Warning>
 **Guardrails are an authoring and testing surface in this release.** You can create guardrail groups, add guardrails to them, change them with a full receipt history, and run a group against sample text in the test dialog. No chat or agent code path invokes the enforcement service, so guardrails **do not inspect live traffic** — nothing is blocked, and nothing is masked, in a real run.
 
 The enforcement code is written and will load your enabled groups when something calls it. At this release, nothing does.
 </Warning>
-
-Guardrails are where an owner or admin writes down what should never pass between the organization and a model: credentials, personal data, prompt-injection attempts, internal identifiers, dangerous shell commands or SQL. You collect rules into a group, choose for each one whether it blocks or masks, pick the stages it watches, and rehearse the group against sample text. Every change is a receipt, so "who loosened the secrets rule, and when" stays answerable.
 
 <Note>
 The [Policies](/guard/policies) page's Guardrails tab calls this page "fully connected". That is true of the receipt history and untrue of enforcement; the Policies page sets out the whole quotation.
@@ -19,7 +19,7 @@ The [Policies](/guard/policies) page's Guardrails tab calls this page "fully con
 
 Guardrails are at `/organization/settings/guardrails`, reachable from the **Guardrails** entry in the organization settings rail.
 
-The page is owner and admin only. A member who reaches the URL is redirected out of settings to `/`, which on the hosted app bounces a signed-in member on to `/chat`. There is no access-denied screen. The server enforces the same rule independently, on reads as well as writes, and answers anyone else with **"Only organization owners or admins can manage guardrails."** Guardrail configuration is not replicated to non-admin browsers at all, because the configuration itself reveals what an organization treats as sensitive: the patterns protecting internal identifiers, the terms it blocks.
+The page is owner and admin only, checked in the browser and again on the server — on reads as well as writes — which answers anyone else with **"Only organization owners or admins can manage guardrails."** A member who reaches the URL is redirected away rather than shown an access-denied screen, and guardrail configuration is not replicated to a member's browser at all; [access control](/guard/access-control) has the full settings rule and the reason for that exclusion.
 
 The page describes itself as:
 
@@ -27,7 +27,7 @@ The page describes itself as:
 
 with a **New guardrails group** action, a **Search guardrails and groups** box, and a **Show archived** switch.
 
-<Frame caption="The Guardrails page with one guardrail configured. Notice that a row shows its group, mode, enforcing strategy and stages, and that the switch belongs to the group rather than the row. The footer's Beetle runners widget is unrelated — Beetle is the assistant's name in the interface.">
+<Frame caption="The Guardrails page with one guardrail configured. Notice that a row shows its group, mode, enforcing strategy and stages, and that the switch belongs to the group rather than the row.">
   <img src="/images/guard/guardrails.png" alt="The Guardrails settings page showing one PII / PHI guardrail in a group named PII, with a MUTATE mode badge, an enforce_but_ignore_on_error strategy badge, Prompt and Response stage badges, and an enabled switch." />
 </Frame>
 

@@ -61,7 +61,7 @@ node scripts/check-docs.mjs            # construction mode
 node scripts/check-docs.mjs --complete # release mode: every nav entry must have a file
 ```
 
-The harness needs no dependencies and enforces six things:
+The harness needs no dependencies and enforces seven things:
 
 1. **Navigation**: no page is listed twice in `docs.json`.
 2. **No orphans**: every content file is referenced in the navigation, and (with `--complete`) every navigation
@@ -69,9 +69,12 @@ The harness needs no dependencies and enforces six things:
 3. **Frontmatter**: every page has a frontmatter block with a non-empty `title`.
 4. **Internal links**: every `/absolute` link resolves to a real page or a declared redirect.
 5. **Images**: every `/images/...` reference resolves to a file on disk.
-6. **Publication safety**: no cloud account numbers, IAM ARNs, instance ids, public IP addresses, personal home
-   directory paths, private hostnames, internal deploy resource names, or named individuals. This site is public;
-   this check is what keeps internal identifiers off it.
+6. **Publication safety in text**: no cloud account numbers, IAM ARNs, instance ids, public IP addresses, personal
+   home directory paths, private hostnames, internal deploy resource names, the legacy marketing domain in either
+   spelling, or named individuals. This site is public; this check is what keeps internal identifiers off it.
+7. **Publication safety in screenshots**: every file under `images/` is listed in `images/REVIEWED.txt`. The text
+   rules cannot see inside a PNG, and screenshots are captured from a live signed-in session, so a new image fails
+   the build until a person has opened it and signed it off.
 
 A green run prints `OK  81 pages, 81 navigation entries, complete`.
 
@@ -105,7 +108,10 @@ Put the PNG under `images/<section>/`, then embed it:
 ```
 
 Screenshots must not show real names, email addresses, IP addresses, cloud account or instance identifiers, or
-internal resource names. Replace them before capture.
+internal resource names. Replace them in the page before you capture, rather than editing the PNG afterwards.
+
+Then open the image, confirm it is clean, and add its path to `images/REVIEWED.txt`. The validator fails until you
+do, because that list is the only place a human confirms what a screenshot actually shows.
 
 ## Deploying changes
 

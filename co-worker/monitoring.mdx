@@ -3,7 +3,7 @@ title: "Monitoring your runs"
 description: "Where to watch what Receipt is working on, what its sandboxed computers are doing, and what your imported Claude Code sessions contain."
 ---
 
-Receipt has three pages for watching work as it happens: **Tasks** for the objectives it is working on, **Computers** for the sandboxed machines that run them, and **Sessions** for the Claude Code activity you have imported. None of the three has a sidebar entry. Tasks and Sessions are reached by typing their URL; Computers has exactly one link, the **Beetle runners** row at the bottom of the sidebar. Beetle is the assistant's name in the interface.
+Receipt has three pages for watching work as it happens: **Tasks** for the objectives it is working on, **Computers** for the sandboxed machines that run them, and **Sessions** for the Claude Code activity you have imported. None of the three has a sidebar entry. Tasks and Sessions are reached by typing their URL; Computers has exactly one link, the **Beetle runners** row at the bottom of the sidebar ([Beetle](/introduction) is the interface's name for the assistant).
 
 Any signed-in member can open all three. There is no owner or admin gate, and if you are signed out the page sends you to sign-in and brings you back afterwards.
 
@@ -59,8 +59,8 @@ After **Create task** the panel reports `Queued run <jobId>. The task will appea
 
 ## Computers
 
-<Frame caption="The Computers page with no computers provisioned: the five capacity tiles, the four panels in their empty states, and the Beetle runners row highlighted in the sidebar footer because it is the link that opened the page.">
-  <img src="/images/co-worker/computers.png" alt="The Computers page showing Ready, Leased, Running jobs, Waiting jobs and Unhealthy tiles at zero, empty Current work, Live output, Inventory and Active runs panels, and the Beetle runners row selected in the sidebar." />
+<Frame caption="The Computers page with no computers provisioned: the five capacity tiles, the four panels in their empty states — Inventory fills its space with the standby beetle rather than a list of machines — and the Beetle runners row highlighted in the sidebar footer because it is the link that opened the page.">
+  <img src="/images/co-worker/computers.png" alt="The Computers page showing Ready, Leased, Running jobs, Waiting jobs and Unhealthy tiles at zero; Current work reading No running jobs, Live output reading No live computer output and Active runs reading No active runs; an Inventory panel filled by an ASCII-art beetle above the words BEETLE COMPUTER STANDBY and Waiting for computer logs; and the Beetle runners row selected in the sidebar." />
 </Frame>
 
 `/computers` shows the live state of the compute capacity that runs background objectives. It is titled **Computers**, described as `opensandbox capacity and live execution output` — the first word is the computer provider, and `opensandbox` is the only one the runtime supports. A line underneath counts `<n> computers · <n> active jobs`.
@@ -117,7 +117,7 @@ Timeline rows in Replay show token usage compactly, as `<input> in · <output> o
 
 ## What is not on these pages
 
-Model spend and plan usage are elsewhere. **Usage** and **Billing** are in organization settings and need an owner or admin role; see [Usage and spend](/llm-gateway/usage-and-spend) and [Billing and plans](/core/billing-and-plans). Organization-wide activity is on the Org Brain dashboard, covered in [Org Brain](/catalog/org-brain).
+Model spend and plan usage are elsewhere. **Usage** and **Billing** live in organization settings and need an owner or admin role; like the three pages above they have no sidebar entry in this release, so you reach them by URL. See [Usage and spend](/llm-gateway/usage-and-spend) and [Billing and plans](/core/billing-and-plans). Organization-wide activity is on the Org Brain dashboard, covered in [Org Brain](/catalog/org-brain).
 
 For operators, the runtime exposes `GET /healthz`, which always returns 200 and reports readiness in its body, and `GET /readyz`, which returns 503 when Postgres does not answer. Receipt exposes no `/metrics` endpoint of its own; everything else an operator watches is on [Health and observability](/core/health-and-observability).
 

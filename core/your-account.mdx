@@ -32,7 +32,7 @@ Everything below happens at `app.kentron.ai`. Sign-up is self-service on the hos
 
 ### What gets created with you
 
-The new organization is named after you: `<Display Name>'s Workspace`. Because the sign-up form has no name field, Receipt derives your display name from the local part of your email address — dots, underscores and hyphens become spaces, and the first letter is capitalised. Someone signing up as `ari.say@example.com` gets the display name **Ari say** and lands in **Ari say's Workspace**. Renaming yourself later on the Account page does not rename the organization.
+The new organization is named after you: `<Display Name>'s Workspace`. Because the sign-up form has no name field, your account starts with an empty name, and Receipt falls back to the local part of your email address for the organization name — dots, underscores and hyphens become spaces, and every word is capitalised. Someone signing up as `ari.say@example.com` lands in **Ari Say's Workspace**. Setting a display name later on the Account page does not rename the organization.
 
 The $5.00 credit is granted once per user, not once per organization. A unique index on the credit ledger guards it, so it does not repeat if you later create a second organization or are added to someone else's. See [organizations and workspaces](/core/organizations-and-workspaces) for what that organization contains and [billing and plans](/core/billing-and-plans) for how the credit is spent.
 
@@ -42,8 +42,8 @@ If you arrived from an invitation link instead, the sign-up form pre-fills the i
 
 The sign-in page greets you with **Welcome Back** / **Sign in to continue**. Bad credentials return `Invalid email or password`.
 
-<Frame caption="The sign-in page. Email and password are the only credentials it takes, and Forgot your password? sits directly under the password field.">
-  <img src="/images/core/sign-in.png" alt="The Welcome Back sign-in page with a filled Email field, a masked Password field, a Forgot your password link and a Sign in button." />
+<Frame caption="The sign-in page. Email and password are the only credentials it takes, Forgot your password? sits directly under the password field, and Create Account at the foot of the card is the way back to sign-up.">
+  <img src="/images/core/sign-in.png" alt="The Welcome Back sign-in page, headed Sign in to continue, with an Email field holding the example address alex@example.com, an empty Password field showing the placeholder Enter your password, a Forgot your password link, a Sign in button and a Create Account link below it." />
 </Frame>
 
 **Forgot your password?** starts an emailed code, not a reset link. Notice that the reset step asks only for your email, and that **Send Code** stays disabled until you type one.
@@ -60,8 +60,8 @@ If your account already has two-factor authentication enrolled, sign-in inserts 
 
 Your account page is at `/settings`, reached from the organization avatar in the sidebar. Unlike the organization settings pages, it is open to every signed-in user regardless of role.
 
-<Frame caption="The Account page: avatar, display name, email and interface language, each saved on its own. In the sidebar behind it, Beetle runners uses Beetle — the name the interface gives the assistant.">
-  <img src="/images/core/account.png" alt="The Account settings page showing an avatar with a Verified badge, a Display Name field, an Email field and a Language selector." />
+<Frame caption="The Account page. Display Name and Email each carry their own Save button; Language is a bare select that applies the moment you pick one, which is why there is no page-level save.">
+  <img src="/images/core/account.png" alt="The Account settings page showing an avatar over the name Alex with a Verified badge, a Display Name field and an Email field each followed by a Save button, and a Language select set to English with no save control." />
 </Frame>
 
 | Setting | What it accepts |
@@ -69,7 +69,7 @@ Your account page is at `/settings`, reached from the organization avatar in the
 | **Avatar** | JPG, PNG, WEBP or SVG, up to 10 MB. A larger file is rejected with `File exceeds limit of 10MB.` and a wrong format with `Please upload a JPG, PNG, WEBP, or SVG image.` |
 | **Display Name** | Up to 32 characters — `Please use 32 characters at maximum.` Saving confirms with `Display name saved.` |
 | **Email** | Your account address, badged `Verified` or `Unverified`. Changing it does not take effect immediately: you get `Email change request submitted. Check your inbox to finish verification.` |
-| **Language** | Your preferred interface language. |
+| **Language** | Your preferred interface language. It is the one row with no **Save** button — the choice applies as soon as you pick it. |
 
 Each field saves on its own, so there is no page-level save. The menu you opened **Account** from also carries the **Sign out** entry.
 

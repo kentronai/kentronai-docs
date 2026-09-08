@@ -5,13 +5,17 @@ description: "One server-side checkpoint applies your organization's model polic
 
 The LLM Gateway is where your organization decides which model providers it uses, which credential pays for each call, and which models are off limits. Every model call Receipt itself makes — a chat answer, a generated thread title, an attachment embedding, a background run — resolves its model and its credential on the server before a provider is contacted. There is no external endpoint for other applications to route their own traffic through.
 
+Both decisions live in two containers. Your **organization** holds your members, your plan and your billing. A **[workspace](/mcp-gateway/workspaces)** sits inside it — a workspace is the boundary that holds a set of connected accounts and the permissions on them. Model policy is set once for the organization; a Models account belongs to a workspace, and a provider key can be saved at either scope.
+
+New to Kentron? Start with [What Kentron is](/introduction).
+
 <Warning>
-**Two of the 32 provider tiles execute, and the Playground is an empty heading.** OpenAI and Anthropic are the only providers with a runtime adapter in this release. The other 30 tiles open, collect their fields, and are then refused with **"This provider is a catalog preview and cannot be configured yet."** The **Playground** item in the Model Gateway rail renders a page containing the heading **"Playground"** and nothing else — no model selector, no request, no usage, no receipt.
+**Only two of the 32 model providers on the app's Models page can run a request, and the Playground is an empty heading.** Each provider is one tile in that gallery, the thing you connect an account to. OpenAI and Anthropic are the only providers with a runtime adapter in this release. The other 30 tiles open, but their fields are disabled and the wizard never advances past its first step; a save sent directly to the server is refused with **"This provider is a catalog preview and cannot be configured yet."** The **Playground** item in the sidebar's **Model Gateway** area renders a page containing the heading **"Playground"** and nothing else — no model selector, no request, no usage, no receipt.
 </Warning>
 
 <CardGroup cols={2}>
   <Card title="Models and providers" href="/llm-gateway/models-and-providers">
-    The provider gallery, the setup wizard, workspace provider accounts, and the model catalogue.
+    The provider gallery, the setup wizard, workspace Models accounts, and the model catalog.
   </Card>
   <Card title="Bring your own key" href="/llm-gateway/bring-your-own-key">
     Organization and workspace provider keys, how they are stored, and which requests they cover.
@@ -34,14 +38,14 @@ The LLM Gateway is where your organization decides which model providers it uses
 | **OpenAI** | The platform-funded server key, or your organization's or workspace's own key | Chat answers, thread titles, embeddings, and background runs |
 | **Anthropic** | Your own key only — there is no platform-funded Anthropic route | Chat answers, and the thread title generated from one; embeddings and background runs are OpenAI-only |
 
-The model catalogue holds 75 rows from eleven manufacturers — `openai`, `anthropic`, `google`, `alibaba`, `deepseek`, `meta`, `mistral`, `minimax`, `moonshotai`, `xai` and `zai` — and it is append-only in practice, so that policy can keep referring to stable model ids. Read the app rather than this page for the current list. Only the 25 rows that can route through OpenAI or Anthropic execute. The rest still appear in the policy screens, but a turn that selects one cannot be routed and fails with **"The AI provider is currently unavailable. Please retry."** (HTTP 502).
+The model catalog held 75 rows from eleven model manufacturers — the company that built the model, such as OpenAI, Google or Mistral — when this page was written, and only the 25 that route through OpenAI or Anthropic execute. The rest still appear in the policy screens, but a turn that selects one cannot be routed and fails with **"The AI provider is currently unavailable. Please retry."** (HTTP 502). [Models and providers](/llm-gateway/models-and-providers) has the catalog itself: the manufacturers, the fields on a row, and why the app rather than this page is the list to trust.
 
 <Note>
-The chat composer has no model picker in this release. Which model a turn uses is resolved on the server from the thread's model and your organization's policy, not chosen per message.
+The chat composer has no model picker in this release. Which model a turn uses is resolved on the server from the thread's model and your organization's policy, not chosen per message. A new thread defaults to `openai/gpt-5.6-luna`, so in practice that is the model a turn runs on unless the thread was created with another id. The one composer control that changes it is **Study Mode**, and the model it pins cannot execute — see [Model policy](/llm-gateway/model-policy).
 </Note>
 
-<Frame caption="The Models page on its Models tab before any provider account exists. All 32 tiles sit under the 'Start adding your Models here' empty state; Filter narrows the grid to the tiles that can actually be saved, and Custom Endpoints sits beside it.">
-  <img src="/images/llm-gateway/models.png" alt="The Models page in organization settings, showing the Start adding your Models here empty state above a grid of 32 provider tiles including AWS Bedrock, OpenAI, Anthropic and Self-Hosted Model, with the Model Gateway area in the left sidebar." />
+<Frame caption="Where the gateway surfaces in the app: the sidebar's Model Gateway area opens this Models page in organization settings, and the Models and Custom Endpoints tabs above the grid are the whole page. The two providers that can run a request, OpenAI and Anthropic, are two tiles in this grid, and nothing on the grid itself marks them apart from the other 30.">
+  <img src="/images/llm-gateway/models.png" alt="The Models page in organization settings, titled Models and described as Connect model providers, choose workspace models, and manage organization-level access; a Models tab and a Custom Endpoints tab sit above the Start adding your Models here empty state and a grid of 32 provider tiles including AWS Bedrock, OpenAI, Anthropic and Self-Hosted Model, with a Search providers box and a Filter toggle on the right and the Model Gateway area in the left sidebar." />
 </Frame>
 
 ## How a request flows
@@ -50,7 +54,7 @@ The chat composer has no model picker in this release. Which model a turn uses i
 flowchart TB
   Req[Chat turn, or the thread title<br/>generated from one]
   Policy{Model policy<br/>provider deny list, model deny list, ZDR}
-  Cred[Credential resolution<br/>workspace provider account, then your key,<br/>then the platform OpenAI key]
+  Cred[Credential resolution<br/>workspace Models account, then your key,<br/>then the platform OpenAI key]
   Budget{Spend reservation<br/>platform credit and seat budget}
   Provider[(OpenAI or Anthropic)]
   Records[Usage row, request log, receipt]
@@ -67,9 +71,9 @@ flowchart TB
 
 Three gates, one provider call, one ledger:
 
-1. **Policy.** Your organization's disabled providers, disabled models and Zero Data Retention requirement are evaluated first. A denial is HTTP 403, and it happens before any spend is reserved and before a provider is contacted.
-2. **Credential.** A workspace provider account wins when one covers the model and you are allowed to use it; otherwise your organization's or workspace's own provider key; otherwise the platform-funded OpenAI key. A request that runs on your own key skips the reservation step entirely.
-3. **Spend.** Platform-funded and paid-seat turns reserve an estimate against the balance *before* the model runs, then settle to the real cost once the answer finishes. An exhausted balance is HTTP 429.
+1. **Policy.** Your organization's disabled providers, disabled models and Zero Data Retention requirement — allow only models the catalog marks as not retaining data — are evaluated first. A denial is HTTP 403, and it happens before any spend is reserved and before a provider is contacted. See [Model policy](/llm-gateway/model-policy).
+2. **Credential.** A workspace **Models account** — a provider account saved in the app, holding one encrypted key and the list of models it may run — wins when one covers the model and you are allowed to use it; otherwise your organization's or workspace's own provider key; otherwise the platform-funded OpenAI key. A request that runs on your own key skips the reservation step entirely. [Bring your own key](/llm-gateway/bring-your-own-key) gives the exact order.
+3. **Spend.** Platform-funded and paid-seat turns reserve an estimate against the balance *before* the model runs, then settle to the real cost once the answer finishes. An exhausted balance is HTTP 429. See [Usage and spend](/llm-gateway/usage-and-spend).
 4. **Provider.** The answer streams back through the same layer, which sets the output cap and the provider options.
 5. **Records.** Every turn that reaches the provider writes a usage row (tokens, model, cost, and whether your own key paid) and one structured request log line carrying the model, the policy outcome, tokens and cost — never the prompt or the completion. A direct chat answer also writes a `response.finalized` receipt carrying the same analytics, and [Replay](/co-worker/replay) reads that stream back.
 

@@ -45,7 +45,7 @@ This lists what the workspace in your session actually publishes. `receipt conne
 | Tools changed after switching workspace | The client is still holding the tool list from the old session | Restart the MCP client |
 
 <Note>
-The **Manage tools** button appears on a connection card only when a workspace id is known — that is, inside a workspace, not on the organization-wide Global Integrations page. See [Tools and permissions](/mcp-gateway/tools-and-permissions).
+**Manage tools** appears on connected cards in both places, but each edits only its own scope. Opened from **Global Integrations** the dialog says "controlled by this organization allowlist"; opened inside a workspace it says "this workspace allowlist". Enabling an operation in one does not enable it in the other, so check the wording in the dialog description before you assume a tool is switched on. See [Tools and permissions](/mcp-gateway/tools-and-permissions).
 </Note>
 
 ## The gateway refused the call
@@ -63,7 +63,7 @@ These come back from the gateway with an HTTP status. The message is what an age
 | `400 integration action '<name>' is not available` | Saving an allowlist entry the connector does not publish | Reopen the dialog so it re-reads the connector's actions |
 
 <Warning>
-**The allowlist changes shape the first time you save it.** Before any save, reads are allowed by default and only listed writes are enabled. From the first save onward, the connection allows exactly the actions on its list — nothing else, reads included. A read that worked yesterday and returns `404 integration action not found or disabled` today is usually a save that dropped it.
+**The allowlist changes shape the first time you save it.** Before any save, reads are allowed by default and only listed writes are enabled. From the first save onward, the connection allows exactly the actions on its list — nothing else, reads included. A read that worked yesterday and returns `404 integration action not found or disabled` today is usually a save that dropped it. [Tools and permissions](/mcp-gateway/tools-and-permissions) explains the two policy versions in full.
 </Warning>
 
 A provider call is given 30 seconds and its response body is capped at 5 MiB, so a very large listing can fail where a narrower query succeeds.
@@ -95,10 +95,10 @@ Only connections created by authorizing the provider participate in the aggregat
 |---|---|---|
 | Linear: "The redirect URI provided does not match any registered URI for this client." | The message is Linear's. The callback URL is not registered on that OAuth application | Register the deployment's callback — `https://app.kentron.ai/oauth/callback` on the hosted app, `https://<your-receipt-host>/oauth/callback` on your own. Exact match, no trailing slash. This applies to any provider using custom OAuth credentials |
 | `400 Unsupported connector. Use one of: <ids>, or any integration configured in Nango.` | The provider id is not in the catalog | Use a catalog id — see [Connectors](/catalog/connectors) |
-| A `400` naming a unique key: `Nango expects an integration unique_key '<id>' for <Label>.` followed by `Set <variable> if your Nango integration uses a different unique_key.` | The integration exists under a different key in the integration service | Set the named environment variable, or create the integration under the expected key |
-| "Integrations are temporarily unavailable because the connection service is not configured. Contact your Receipt administrator." | The deployment has not configured the integration service. Operators see `503 Self-hosted Nango is not configured.` naming `RECEIPT_INTEGRATIONS_URL`, `RECEIPT_INTEGRATIONS_SECRET_KEY` and `RECEIPT_INTEGRATIONS_WEBHOOK_SECRET` | Configure those variables. Running locally, the same failure reads "Integrations are not configured for this local app." |
-| Authorization completes in the browser, but no connection appears | One cause is the signed webhook that records it being rejected: the gateway answers `401 invalid Nango webhook signature` | Align `RECEIPT_INTEGRATIONS_WEBHOOK_SECRET` with the integration service's HMAC key |
-| `502 integration_connection_delete_failed` on disconnect | The integration service refused the delete | Retry; if it persists, check that service |
+| A `400` naming a unique key: `Nango expects an integration unique_key '<id>' for <Label>.` followed by `Set <variable> if your Nango integration uses a different unique_key.` | The integration exists under a different key in the integration provider | Set the named environment variable, or create the integration under the expected key |
+| "Integrations are temporarily unavailable because the connection service is not configured. Contact your Receipt administrator." | The deployment has not configured the integration provider. Operators see `503 Self-hosted Nango is not configured.` naming `RECEIPT_INTEGRATIONS_URL`, `RECEIPT_INTEGRATIONS_SECRET_KEY` and `RECEIPT_INTEGRATIONS_WEBHOOK_SECRET` | Configure those variables. Running locally, the same failure reads "Integrations are not configured for this local app." |
+| Authorization completes in the browser, but no connection appears | One cause is the signed webhook that records it being rejected: the gateway answers `401 invalid Nango webhook signature` | Align `RECEIPT_INTEGRATIONS_WEBHOOK_SECRET` with the integration provider's HMAC key |
+| `502 integration_connection_delete_failed` on disconnect | The integration provider refused the delete | Retry; if it persists, check that service |
 
 ## Workspace and sharing errors
 
@@ -119,7 +119,7 @@ An invitation that stays **Pending** with no mail delivered is usually not a gat
 | Code and message | Cause | Fix |
 |---|---|---|
 | `-32602 Unknown or unavailable tool` | The alias is not in the current list — the workspace changed, the connection went invalid, or the allowlist changed | Re-run `tools/list`, or restart the client |
-| `-32603 Receipt MCP discovery failed` | Tool composition failed against storage or the integration service | Retry; ask an operator to check the runtime |
+| `-32603 Receipt MCP discovery failed` | Tool composition failed against storage or the integration provider | Retry; ask an operator to check the runtime |
 | A result with `isError: true` and "Receipt could not complete the integration tool call." | A provider or transport failure that is not one of the gateway's own errors | Retry, then check the runtime logs |
 | `receipt mcp: not signed in; run 'receipt setup' first` | No saved session for the target | `receipt setup` |
 | `receipt mcp install/status/remove currently supports codex; use 'receipt mcp config --client generic' for other clients` | Automated install exists for Codex only | Generate the generic descriptor and paste it into the client by hand |
@@ -154,7 +154,7 @@ The workspace **Activity** page is a narrower view still, and says so: "Tool req
 | Message | Cause |
 |---|---|
 | "Workspace authorization failed with HTTP `<n>`." / "Receipt Connect returned invalid workspace authorization." | The runtime refused the workspace token exchange — usually workspace membership |
-| "Receipt Connect session failed with HTTP `<n>`." | The runtime could not start an authorization session with the integration service |
+| "Receipt Connect session failed with HTTP `<n>`." | The runtime could not start an authorization session with the integration provider |
 | "Receipt Connect catalog failed with HTTP `<n>`." | The connector catalog could not be read; connected apps stay visible while new connections are unavailable |
 | "`<error>` Showing the last synced connection state." | Connection state could not be refreshed; the page is showing the last known rows |
 | "Select an available workspace before managing integrations. No organization-wide connections are shown as a fallback." | The workspace-scoped page has no workspace selected |

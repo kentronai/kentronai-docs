@@ -29,7 +29,7 @@ All requests go to `<gatewayUrl>/connect/workspaces` with your session token and
 | `list` | none | Lists every workspace you can reach, marking the current one |
 | `create <name…>` | name words, joined with spaces | Creates a workspace. Requires organization owner or admin |
 | `rename [<selector>] <name…>` | selector optional | Renames a workspace. The first positional is treated as a selector **only when two or more positionals are given**; with one positional it renames the current workspace |
-| `use <selector>` | selector required | Switches workspaces. The only subcommand that mints a new token |
+| `use <selector>` | selector required | Switches workspaces. The only subcommand that binds your session to a different workspace |
 | `delete <selector>` | selector required | Deletes a workspace |
 
 An unrecognised subcommand answers:
@@ -38,7 +38,7 @@ An unrecognised subcommand answers:
 receipt workspace supports list, current, create, rename, use, and delete
 ```
 
-`receipt workspace --help` gets that same line: the word is taken literally as a subcommand name, so this command never prints help. Help comes only from `receipt --help`.
+`receipt workspace --help` gets that same line: the word is taken literally as a subcommand name, so this command never prints help. Help comes only from `receipt --help`, `receipt help` or `receipt -h`.
 
 A missing name or selector answers `receipt workspace create requires a name`, `receipt workspace rename requires a name`, `receipt workspace use requires a workspace id, slug, or name` or `receipt workspace delete requires a workspace id, slug, or name`.
 
@@ -47,9 +47,11 @@ A missing name or selector answers `receipt workspace create requires a name`, `
 A single workspace prints as `Name (id)`, with a trailing `[Default]` when it is the default workspace. `list` prefixes each row with a space, except the current workspace, which gets `*`:
 
 ```
-* Engineering (<id>)
   Default (<id>) [Default]
+* Engineering (<id>)
 ```
+
+The server returns the default workspace first, then the rest by name.
 
 `delete` prints `Deleted workspace <id>`.
 
@@ -61,11 +63,11 @@ A single workspace prints as `Name (id)`, with a trailing `[Default]` when it is
 organization owner or admin permission is required
 ```
 
-`rename` and `delete` are checked per workspace: you need the owner or admin role **in that workspace**, or owner or admin in the organization. `current`, `list` and `use` need nothing beyond membership of the workspace involved.
+`rename` and `delete` are checked per workspace: you must be a member of that workspace **and** hold the owner or admin role there. An organization owner or admin holds that role in every workspace they are a member of, but membership is still required — an organization admin who was never added to a workspace gets `workspace not found or unavailable` instead. `current`, `list` and `use` need nothing beyond membership of the workspace involved.
 
-### `use` is the only command that changes your token
+### `use` is the only command that re-scopes your session
 
-`use` calls `POST /connect/workspaces/<id>/token`, receives a new JWT bound to that workspace, and rewrites the session file. Nothing else re-scopes the session: renaming the current workspace updates the name stored in the file, and `current` and `list` repair it (below), but only `use` changes which workspace the token is for.
+`use` calls `POST /connect/workspaces/<id>/token`, receives a new JWT bound to that workspace, and rewrites the session file. Nothing else moves you: renaming the current workspace updates the name stored in the file, and `current` and `list` repair it (below) — they can even mint a replacement token — but only `use` changes which workspace the token is for.
 
 With `--json`, `use` additionally reports `sessionFile` and `targetSessionFile` so you can see exactly which files were rewritten.
 
@@ -77,7 +79,7 @@ With `--json`, `use` additionally reports `sessionFile` and `targetSessionFile` 
 Clients that read the session at start-up do not notice the switch. Restart Codex, or any other MCP client using the `receipt mcp` bridge, after `receipt workspace use`, then rediscover tools.
 </Tip>
 
-### `delete` is refused twice
+### Three ways `delete` is refused
 
 Deleting the workspace you are currently in is refused by the CLI before any request is sent:
 
@@ -85,11 +87,19 @@ Deleting the workspace you are currently in is refused by the CLI before any req
 cannot delete the current workspace; switch to another workspace first
 ```
 
-Switch away with `receipt workspace use <other>` first. Separately, the server refuses to delete the Default workspace at all, answering 409:
+Switch away with `receipt workspace use <other>` first. The server adds two refusals of its own, both 409. It never deletes the Default workspace:
 
 ```
 the Default workspace cannot be deleted
 ```
+
+And it will not delete a workspace that still holds provider connections:
+
+```
+workspace connections must be removed before deleting the workspace
+```
+
+Remove them first: `receipt connect disconnect --provider <id>` from a session bound to that workspace, or the workspace's **Open integrations** page.
 
 ## How selectors match
 
@@ -142,12 +152,13 @@ Each workspace object carries `id`, `organizationId`, `name`, `slug`, `isDefault
 
 Server errors surface verbatim, so you can search on the text you saw:
 
-- `unauthorized` (401) — no token, or one the gateway will not accept
+- `unauthorized` (401) — the gateway would not accept your session token, usually because it expired; the CLI session JWT lives 12 hours and is not refreshed
 - `organization owner or admin permission is required` (403)
-- `workspace not found` (404) — renaming or deleting an id this organization does not have
-- `workspace not found or unavailable` (404) — you are not a member of the workspace you asked for
+- `workspace not found or unavailable` (404) — the workspace id in the request is not one you are a member of. `use`, `rename` and `delete` resolve their selector against your own workspace list first, so you normally get the local `workspace '<x>' was not found` instead; this one reaches you when the workspace is deleted, or your access to it is revoked, between the list call and the request
+- `workspace not found` (404) — the workspace row disappeared mid-request, after the permission check and before the write
 - `a workspace with this name already exists` (409)
 - `the Default workspace cannot be deleted` (409)
+- `workspace connections must be removed before deleting the workspace` (409)
 - `workspace name is too long` (400) — names are capped at 120 characters
 - `workspace name is invalid` (400) — nothing in the name survives to become a slug
 - `workspace name uses a reserved system prefix` (400)
@@ -158,7 +169,7 @@ When the server sends no error string at all, the CLI reports `Receipt workspace
 <Tip>
 If [`receipt tools list`](/cli/tools-and-mcp) shows fewer tools than you expected, check `receipt workspace current` first. `receipt tools list`, `receipt tools call`, `receipt mcp config` and `receipt connect status` all read the workspace bound into your saved session, and a provider you connect from the terminal lands in that same workspace — so a connection made before a switch will not appear after it.
 
-Those same commands answer `workspace_membership_required` (403) when the workspace in your session is one you no longer belong to, or one that has been deleted. Signing in again with `receipt setup --fresh-login` mints a token for **Default**, which you are always a member of.
+The ones that call the gateway — `receipt tools list`, `receipt tools call` and `receipt connect status` — answer `workspace_membership_required` (403) when the workspace in your session is one you no longer belong to, or one that has been deleted. (`receipt mcp config` only reads the session file, so it keeps printing a config for a workspace that is already gone.) Signing in again with `receipt setup --fresh-login` mints a token for **Default**, which you are always a member of.
 </Tip>
 
 Next step: [connect a provider from the terminal](/cli/connect).

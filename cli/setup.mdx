@@ -1,9 +1,9 @@
 ---
 title: "Sign in: setup, login, and logout"
-description: "Sign the released CLI in with one command and a browser approval, and understand the session file and twelve-hour token it leaves behind."
+description: "Sign the released CLI in with one command and a browser approval, and understand the session file and 12-hour token it leaves behind."
 ---
 
-Signing in takes one command and one browser approval. Run `receipt setup`, approve the CLI in the page that opens, and every other command — `receipt workspace`, `receipt tools`, `receipt mcp`, `receipt connect` — has an identity to work with. It stays signed in for twelve hours.
+Signing in takes one command and one browser approval. Run `receipt setup`, approve the CLI in the page that opens, and every other command — `receipt workspace`, `receipt tools`, `receipt mcp`, `receipt connect` — has an identity to work with. It stays signed in for 12 hours.
 
 ## Three commands, one session
 
@@ -193,10 +193,10 @@ receipt logout: signed out <email> from https://<your-receipt-host>
 With nothing to remove it prints `receipt logout: not signed in` and still exits 0. It reads no flags — there is no `--target`, so it always acts on whichever session is currently active. Sessions for other targets are left in place, which is what makes `receipt setup --target local` a safe way to come back to a local stack without losing your hosted sign-in. Deleting the files by hand works too.
 
 <Warning>
-Signing out is local. It removes the files; it does not revoke the token at the gateway, so a copy of that token stays usable until it expires. Treat a leaked session file as live credentials for up to twelve hours.
+Signing out is local. It removes the files; it does not revoke the token at the gateway, so a copy of that token stays usable until it expires. Treat a leaked session file as live credentials for up to 12 hours.
 </Warning>
 
-## The token: twelve hours, three scopes, one workspace
+## The token: 12 hours, three scopes, one workspace
 
 The token the login returns is a JWT that:
 

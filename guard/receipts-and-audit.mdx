@@ -3,7 +3,7 @@ title: "Receipts and audit"
 description: "What a receipt records, which surfaces write one, which leave no trace, and how the SHA-256 hash chain is checked on every append and every replay."
 ---
 
-Receipt keeps an append-only record of the work it does, and gives you three ways to read it: the **Agent replay** dialog for one chat thread or background run, **Gateway activity** for a workspace's tool calls, and a chain audit you can run on a schedule. What makes that record worth showing an auditor is not that a service promises it did not edit the log. It is that every receipt carries the hash of the one before it, so an edit, an insertion or a deletion changes a hash — and the next read refuses to fold the chain.
+Receipt keeps an append-only record of the work it does, and gives you three ways to read it: the **Agent replay** dialog for one chat thread or background run, **Gateway activity** for a workspace's tool calls, and `receipt dst`, a chain audit you can run on a schedule from a source checkout. What makes that record worth showing an auditor is not that a service promises it did not edit the log. It is that every receipt carries the hash of the one before it, so an edit, an insertion or a deletion changes a hash — and the next read refuses to fold the chain.
 
 <Warning>
 **Receipts are tamper-evident, not signed.** There is no key material, no signature field on a receipt, and no timestamping authority anywhere in the product. A hash chain detects modification; it does not authenticate origin. Two coverage gaps matter as much: tool calls that arrive over the MCP protocol write no receipt, and guardrail and model-policy decisions are not receipts at all. Both are listed below.
@@ -17,12 +17,14 @@ Receipt keeps an append-only record of the work it does, and gives you three way
 
 ## What writes a receipt
 
+In the stream names below, `<repoKey>` is a per-deployment constant and the other angle-bracket segments are ids filled in when the receipt is written.
+
 | Surface | Stream | What is appended |
 |---|---|---|
 | A chat turn | `apps/start/<repoKey>/app-chat/sessions/<threadId>`, plus `.../runs/<runId>` | `problem.set` with the message you sent, `run.configured`, a `run.status` for every progress note and status change, and `response.finalized` with the answer |
 | Thread settings — rename, archive, pin, delete, branch selection, mode, context window, disabled tools | The thread's own chat stream | `thread.settings.updated` or `thread.branch.updated`, one per change, written on the authoritative server pass of the sync mutation |
 | A background run | `factory/objectives/<objectiveId>`, plus `jobs/<jobId>` for each job it dispatches | Objective, task and job lifecycle: planning, dispatch, computer leases, commands and their output, candidates, integration and completion |
-| A REST gateway tool call (`POST /connect/call`) | `receipt-connect/gateway/<orgId>/<workspaceId>` | `tool.called`, and on success `tool.observed`, both with `agentId: "mcp-gateway"` and a fresh run id per call |
+| A REST gateway tool call (`POST /connect/call`) | `receipt-connect/gateway/<orgId>/<workspaceId>` | `tool.called`, and on success `tool.observed`, both with `agentId: "mcp-gateway"` and a fresh run id per call; a failed call leaves only `tool.called`, carrying its error |
 | Guardrail groups | `organizations/<orgId>/guardrail-groups/<groupId>` | `organization.guardrail_group.created`, `.updated`, `.enabled_changed`, `organization.guardrail.added`, `.updated`, `.removed`, `organization.guardrail_group.archived`, `.deleted` |
 | Policy rules | `organizations/<orgId>/policy-rules/<ruleId>` | `organization.policy_rule.created`, `.updated`, `.enabled_changed`, `.deleted` |
 | Organization skills | `organizations/<orgId>/skills/<skillId>` | `organization.skill.created`, `.version_added`, `.save_acknowledged`, `.enabled_changed`, `.archived`, `.deleted` |
@@ -38,7 +40,7 @@ Two things follow from that list. The [Guardrails](/guard/guardrails) and [Polic
 | MCP-protocol tool calls | A call arriving on the gateway's MCP endpoint (`POST /connect/mcp`) — the one an MCP client is pointed at — passes the same scope and allowlist checks but writes no `tool.called` or `tool.observed` receipt, and so never appears in Gateway activity. Calls over the REST route do. |
 | Model-policy denials | A blocked model is an HTTP 403 carrying a machine reason. It lands in the request's telemetry event, not in a receipt. See [Model policy](/llm-gateway/model-policy). |
 | Guardrail evaluations | No guardrail evaluation is recorded anywhere, including the admin test dialog, which states that "Nothing is saved and no live traffic is affected." The **Monitor only** strategy has no store behind it in this release. |
-| Gateway administration | Enabling a tool, connecting an integration or inviting a member goes to the gateway's own **Activity log** panel, backed by the `org_activity_log` table, not to a receipt stream. That is deliberate: these are decisions *about* the gateway rather than traffic through it, so the receipt log keeps one meaning — runtime execution. |
+| Gateway administration | Enabling a tool, connecting an app or inviting a member goes to the gateway's own **Activity log** panel, backed by the `org_activity_log` table, not to a receipt stream. That is deliberate: these are decisions *about* the gateway rather than traffic through it, so the receipt log keeps one meaning — runtime execution. |
 | A call with no workspace | A gateway call that resolves no workspace id is not recorded at all. |
 
 <Note>
@@ -54,7 +56,7 @@ That split is load-bearing for an audit:
 - **`context` is authoritative and it is hashed.** When a writer sets it, it carries the actor, tenant, organization, objective, task, job, run and branch the receipt belongs to. Changing any of it changes the hash and breaks the chain.
 - **`hints` are non-authoritative transport metadata and they are not hashed.** They drive indexes, tracing and idempotency, not the record of what happened.
 
-Canonicalization sorts object keys and honours `toJSON()`. It refuses to serialize `undefined`, `bigint`, `function`, `symbol`, non-finite numbers, circular structures and non-plain objects, raising errors prefixed `receipt canonicalization`.
+Canonicalization sorts object keys with `localeCompare` and honours `toJSON()`. It refuses to serialize `undefined`, `bigint`, `function`, `symbol`, non-finite numbers, circular structures and non-plain objects, raising errors prefixed `receipt canonicalization`.
 
 ## The three checks that run
 

@@ -3,7 +3,7 @@ title: "Factory concepts and configuration"
 description: "The objective, task, candidate, job and check vocabulary, the promotion gate, the single execution path, and every key the Factory config loader actually reads."
 ---
 
-Give Factory a written goal and it breaks the goal into tasks, runs each one inside a disposable sandbox computer, integrates the result into your repository, and records every step as receipts you can replay afterwards. This page defines the vocabulary you see in the CLI's output and the configuration file that shapes a run. [The command reference](/cli/from-source/factory-reference) covers how to drive it.
+Factory is the engine behind Receipt's [background runs](/co-worker/background-runs). Give it a written goal and it breaks the goal into tasks, runs each one inside a disposable sandbox computer, integrates the results on an integration branch, and records the run as receipts you can replay afterwards. This page defines the vocabulary you see in the CLI's output and the configuration file that shapes a run. [The command reference](/cli/from-source/factory-reference) covers how to drive it.
 
 <Warning>
 **Factory is reachable only from the in-repo developer CLI.** `receipt factory` requires a Receipt checkout, Bun and Postgres, and is absent from the released `receipt` binary. See [The developer CLI](/cli/from-source/overview) for the difference between the two programs named `receipt`.
@@ -17,29 +17,31 @@ An objective carries twelve statuses:
 
 `planning`, `waiting_for_slot`, `collecting_evidence`, `evidence_ready`, `synthesizing`, `executing`, `integrating`, `promoting`, `completed`, `blocked`, `failed`, `canceled`
 
+`completed`, `failed` and `canceled` are terminal. `blocked` also stops an objective, but it is deliberately kept out of the terminal set because an operator receipt can unblock or redirect it during replay.
+
+These are the transitions the objective reducer actually performs:
+
 ```mermaid
 stateDiagram-v2
     [*] --> planning
-    planning --> waiting_for_slot
-    waiting_for_slot --> collecting_evidence: takes the repo execution slot
-    collecting_evidence --> evidence_ready
-    evidence_ready --> synthesizing
-    synthesizing --> executing
-    executing --> integrating
-    integrating --> promoting
-    promoting --> completed
+    planning --> waiting_for_slot: queued for the repo slot
+    waiting_for_slot --> executing: a task run starts
+    executing --> synthesizing: synthesis is dispatched
+    synthesizing --> completed: investigation objectives end here
+    synthesizing --> integrating: a task is integrated
+    integrating --> promoting: integration reports ready_to_promote
+    promoting --> completed: the promoted result is published
+    executing --> blocked
+    executing --> failed
+    executing --> canceled
     completed --> [*]
     blocked --> [*]
     failed --> [*]
     canceled --> [*]
-    note right of executing
-      blocked, failed and canceled are the
-      three non-completing statuses
-    end note
 ```
 
 <Note>
-The diagram follows the order in which the code declares the statuses. Read the arrows as the ordinary forward path, not as the only legal moves.
+`blocked`, `failed` and `canceled` are reachable from any running status, not only from `executing`. Two of the twelve declared statuses — `collecting_evidence` and `evidence_ready` — are accepted everywhere an objective status is read but are never assigned to an objective by the reducer in this release; they surface as the task execution phase and as the objective's phase detail instead.
 </Note>
 
 Alongside the status the CLI surfaces two further vocabularies.
@@ -58,18 +60,20 @@ The display state and the phase detail appear together in the header the CLI pri
 state=<displayState> · <phaseDetail> · authority:<statusAuthority> slot=<slotState>[ q=<n>]
 ```
 
-The human-readable lines that go with a phase are fixed strings. Six of them:
+Each phase also carries a fixed label and a fixed one-line summary, which the CLI prints as `status=<label>` and `summary=<summary>`. Six of the pairs:
 
-- `Queued — Waiting for the repo execution slot.`
-- `Waiting for computer — Waiting for computer capacity before the agent starts.`
-- `Collecting evidence — Gathering evidence for the active task.`
-- `Synthesizing — Turning evidence into a final answer.`
-- `Blocked — Waiting for operator guidance before continuing.`
-- `Stalled — Execution stopped making visible progress.`
+| Label | Summary |
+| --- | --- |
+| `Queued` | `Waiting for the repo execution slot.` |
+| `Waiting for computer` | `Waiting for computer capacity before the agent starts.` |
+| `Collecting evidence` | `Gathering evidence for the active task.` |
+| `Synthesizing` | `Turning evidence into a final answer.` |
+| `Blocked` | `Waiting for operator guidance before continuing.` |
+| `Stalled` | `Execution stopped making visible progress.` |
 
 ### Mode and severity
 
-An objective has a **mode**, either `delivery` or `investigation`, and a **severity**, an integer from 1 to 5. Both default from the profile; the checked-in profile sets mode `investigation` and severity `1`. Mode is not cosmetic — it changes whether checks run, whether the objective competes for the repository slot, whether the promotion gate runs at all, and whether auto-promotion is allowed.
+An objective has a **mode**, either `delivery` or `investigation`, and a **severity**, an integer from 1 to 5. Both default from the profile: the checked-in profile sets `defaultObjectiveMode: investigation`, and because it declares no default severity the resolved default is `1`. Mode is not cosmetic — it changes whether checks run, whether the objective competes for the repository slot, whether the promotion gate runs at all, and whether auto-promotion is allowed.
 
 ### The repository execution slot
 
@@ -77,7 +81,7 @@ Delivery objectives compete for a repository execution slot. Investigation objec
 
 How many delivery objectives may hold the slot at once is `repoSlotConcurrency`. It defaults to **20** and is overridden by `RECEIPT_FACTORY_REPO_SLOT_CONCURRENCY`; the CLI and the runtime resolve it the same way, and the value is coerced to at least 1. Anything beyond the limit waits.
 
-That constraint is why the board has the five sections it has: **Needs Attention**, **Active**, **Queued**, **Completed** and **Archived**. Two of those sections carry a description that says exactly what the slot means:
+The board reflects that constraint in its five sections — **Needs Attention**, **Active**, **Queued**, **Completed** and **Archived** — two of which carry a description that says exactly what the slot means:
 
 - Active — `Objectives currently holding the repo execution slot.`
 - Queued — `Objectives waiting for the repo execution slot.`
@@ -124,7 +128,7 @@ Each entry accepts `title`, `prompt` (or `task`), and `dependsOn`, which is an a
 
 ## Candidate
 
-A candidate is one sequential attempt at a task. Candidate ids contain `_candidate_`, which is how the CLI recognises one when you pass it as a target. Candidate statuses are:
+A candidate is one attempt at a task, numbered from `01` within that task. Candidate ids contain `_candidate_` — for example `task_01_candidate_01` — which is how `receipt factory parse` tells a candidate target from a task target. Candidate statuses are:
 
 `planned`, `running`, `awaiting_review`, `changes_requested`, `approved`, `integrated`, `rejected`, `conflicted`
 
@@ -136,13 +140,13 @@ A **run** is an agent-loop run inside a stream whose name ends `/runs/<runId>`.
 
 ## Check
 
-A check is a shell validation command run against the integration worktree before promotion. `--check` accepts comma- or newline-separated values and is repeatable.
+A check is a shell validation command. The runtime runs the configured checks inside the sandbox computer twice: against a candidate's workspace before that candidate can be delivered, and against the integration workspace during integration validation, before promotion. `--check` accepts comma- or newline-separated values and is repeatable.
 
 The runtime resolves the check list in this order:
 
 1. If `checks` was supplied at all — including as an empty array — that is an explicit contract and is used as given.
 2. Investigation objectives get `[]`.
-3. Connected-system objectives, matched on their required capabilities, get `[]`.
+3. Connected-system objectives get `[]` — that is, objectives that declare required capabilities, or whose capability context already has a selected Receipt Connect provider.
 4. A profile whose `defaultValidationMode` is `none` gets `[]`.
 5. Otherwise the default list, which is `["bun run build"]`.
 
@@ -154,7 +158,7 @@ The CLI applies a shorter version of the same rule before it sends the objective
 
 ## Promotion
 
-Promotion merges the approved integration branch into the source branch. The integration status moves through:
+Promotion publishes the approved integration branch. The runtime dispatches a publisher job that pushes the branch to the GitHub remote and opens a pull request against the source branch; nothing is merged for you. The integration status is one of:
 
 `idle`, `queued`, `merging`, `validating`, `validated`, `ready_to_promote`, `promoting`, `promoted`, `conflicted`
 
@@ -179,7 +183,7 @@ In a stock checkout the practical default is **manual promotion**: you create an
 
 ## The profile
 
-A profile lives at `<profileRoot>/profiles/<id>/PROFILE.md`, optionally with a `SOUL.md` beside it. The repository ships **exactly one**: `profiles/receipt/`, whose canonical id is `receipt` and whose label is `Beetle` — the name the interface gives the assistant.
+A profile lives at `<profileRoot>/profiles/<id>/PROFILE.md`, optionally with a `SOUL.md` beside it. The repository ships **exactly one**: `profiles/receipt/`, whose canonical id is `receipt` and whose label is `Beetle`.
 
 Its frontmatter declares:
 
@@ -197,7 +201,7 @@ Profile-root resolution walks candidates until one contains a `profiles/` direct
 
 ## Execution: one path, one target
 
-The execution path has exactly one legal value, `computer`, and the only computer execution target is `opensandbox`. Neither is a choice you make per objective; the flags exist to name the one value each accepts, and anything else fails with `--execution-path must be 'computer'` or `--computer-provider must be one of: opensandbox`.
+The execution path has exactly one legal value, `computer`, and the only computer execution target is `opensandbox`. Neither is a choice you make per objective; the flags exist to name the one value each accepts. Anything else fails with `--execution-path must be 'computer'`, `--computer-provider must be one of: opensandbox`, or `--execution-target must be one of: opensandbox` — the last from `--execution-target`, the shorthand the CLI's own help advertises, which sets both the path and the provider.
 
 Three environment variables control the lane:
 
@@ -228,13 +232,7 @@ The host idle value is still parsed into the sandbox configuration, but nothing 
 </Note>
 
 <Warning>
-**The default worker image is local-only, and two guards refuse to use it remotely.**
-
-`OPEN_SANDBOX_IMAGE is required for cloud OpenSandbox execution; refusing to use the local-only default image.`
-
-`OPEN_SANDBOX_IMAGE must reference a published image when Receipt workers use a public gateway. Refusing local-only image receiptfactory/opensandbox-worker:local. Set OPEN_SANDBOX_IMAGE to the published ECR/OpenSandbox worker image before running remote computer objectives.`
-
-Set `OPEN_SANDBOX_IMAGE` to a published image before running anything remotely.
+**The default worker image is local-only, and two guards refuse to use it remotely.** Set `OPEN_SANDBOX_IMAGE` to a published image before you run anything remotely. The computer lane section of [Factory engine](/core/factory-engine) quotes both refusal messages in full.
 </Warning>
 
 Starting the host runs a readiness health check. When it fails the error is `OpenSandbox host is not healthy after readiness check for <protocol>://<domain>`.
@@ -267,7 +265,7 @@ The checked-in helper `receipt/bin/receipt-workbench` exposes three commands:
 
 - `path` prints the absolute `receipt/current` path.
 - `show` materializes a repository projection into `receipt/current/` when none is mounted, then prints `Receipt workbench: <path>`, the objective and task titles when it has them, and `Read receipt/current/context.md and receipt/current/receipt-cli.md.`
-- `finalize` prints `{"resultPath": "…/receipt/current/output/result.json", "summaryPath": "…/receipt/current/output/summary.md"}`.
+- `finalize` prints a JSON object with two keys, `resultPath` (`receipt/current/output/result.json`) and `summaryPath` (`receipt/current/output/summary.md`), both as absolute paths.
 
 Anything else exits 2 with `Unknown receipt-workbench command: <cmd>` on stderr.
 
@@ -289,7 +287,7 @@ The message a missing config produces is:
 Factory is not initialized in this repo. Run `receipt factory init` first.
 ```
 
-Environment files are loaded before any command dispatches, later files overriding earlier ones but never overriding a value already exported in your shell: `<repo>/.env`, `<repo>/.env.local`, `<repo>/apps/start/.env`, `<repo>/apps/start/.env.local`, then `<repo>/.deploy-artifacts/local-up/latest.env` and the files named by `START_ALL_ENV_FILE`, `RECEIPT_LOCAL_ENV_FILE`, `VALIDATE_STACK_ENV_FILE`, `START_ALL_ENV_FILES` and `VALIDATE_STACK_ENV_FILES`. Set `RECEIPT_CLI_LOAD_LOCAL_ENV=0` to skip the generated local-up file — the explicitly named ones are still loaded.
+Every variable above can come from an environment file: the CLI loads them before any command dispatches, later files overriding earlier ones but never overriding a value already exported in your shell. [The developer CLI](/cli/from-source/overview) lists the ten locations in order.
 
 ## `.receipt/config.json`
 
@@ -316,7 +314,7 @@ How each top-level field resolves:
 </ParamField>
 
 <ParamField path="dataDir" type="string" default=".receipt/data">
-`RECEIPT_DATA_DIR`, then `DATA_DIR`, then the stored value, then `.receipt/data`. Note that this is relative to the directory containing `.receipt/`, not to your current directory.
+`RECEIPT_DATA_DIR`, then `DATA_DIR`, then the stored value, then `.receipt/data`. The stored value and the default are resolved against the directory that contains `.receipt/`; the two environment values are resolved against your current directory instead.
 </ParamField>
 
 <ParamField path="codexBin" type="string" default="codex">

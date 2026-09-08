@@ -14,14 +14,14 @@ Connecting on Global Integrations requires organization owner or admin. Inside a
 | Where | Who reads it | Who can connect |
 |---|---|---|
 | Organization Settings > **Integrations** (titled **Global Integrations**) | Web chat and background runs started from chat; the Slack app | Organization owner or admin |
-| MCP Gateway > a workspace > **Open integrations** | The Receipt CLI and any MCP client bound to that workspace; Factory workers running a task in that workspace | Workspace owner or admin |
+| MCP Gateway > a workspace > **Open integrations** | The Receipt CLI and any MCP client bound to that workspace; the sandboxed workers that run a [background task](/co-worker/background-runs) in that workspace | Workspace owner or admin |
 
 The Teams app is the exception: it reads the organization's **Default** workspace, not Global Integrations. See [Connection scopes](/mcp-gateway/connection-scopes) for the full map.
 
 The practical consequence: connecting GitHub on Global Integrations makes it available to chat and Slack, but `receipt tools list` will not show it until GitHub is also connected inside the workspace the CLI is bound to. Sign-in binds the CLI to **Default**; [`receipt workspace use`](/cli/workspaces) moves it.
 
-<Frame caption="Global Integrations. Search, category chips and the All / Connected / Available / Popular control sit above the cards. Connected apps such as Airtable, AWS and GitHub show Manage tools and Disconnect; apps that are not connected yet, such as Anthropic and Apollo, show Connect.">
-<img src="/images/mcp-gateway/global-integrations.png" alt="The Global Integrations page in Organization Settings, with a search box, category chips, a segmented control, and a grid of integration cards where connected apps show Manage tools and Disconnect buttons and unconnected apps show a Connect link." />
+<Frame caption="Global Integrations, reached from Integrations in the main sidebar. Search, category chips and the All / Connected / Available / Popular control sit above the cards. Connected apps such as Airtable, AWS and GitHub show Manage tools and Disconnect; apps that are not connected yet, such as Anthropic and Apollo, show Connect. The La Growth Machine card shows an empty box where its vendor logo would load; the card itself behaves like any other.">
+<img src="/images/mcp-gateway/global-integrations.png" alt="The Global Integrations page with the Integrations item selected in the left sidebar, a search box, category chips, a segmented control, and a grid of integration cards where connected apps show Manage tools and Disconnect buttons and unconnected apps show a Connect link." />
 </Frame>
 
 ## The Global Integrations page
@@ -48,11 +48,11 @@ Each card tells you its state:
 
 <Steps>
 <Step title="Click Connect on the card">
-The button reads **Opening** while Receipt asks the integrations service for an authorization session, then a dialog titled `Connect <name>` appears. Its description names the boundary you are about to cross, and it depends on where you started: at the organization level it connects the app "to this organization's Global Integrations. Other organizations you belong to are not affected."; from a workspace it connects the app "only to the `<workspace>` workspace."
+The button reads **Opening** while Receipt asks the integration provider for an authorization session, then a dialog titled `Connect <name>` appears. Its description names the boundary you are about to cross, and it depends on where you started: at the organization level it connects the app "to this organization's Global Integrations. Other organizations you belong to are not affected."; from a workspace it connects the app "only to the `<workspace>` workspace."
 </Step>
 
 <Step title="Authorize with the provider">
-The provider's own authorization interface renders inside that dialog. Receipt never builds the provider's authorize URL, and what you enter goes to the integrations service that holds provider credentials, not into Receipt's own tables.
+The provider's own authorization interface renders inside that dialog. Receipt never builds the provider's authorize URL, and what you enter goes to the integration provider that holds the credentials, not into Receipt's own tables.
 </Step>
 
 <Step title="Wait for the card to flip">
@@ -63,12 +63,12 @@ On success a toast reads `<name> connected.` Receipt also polls connection state
 If a connection for that provider already exists, connecting again reconnects it rather than creating a second, separate connection.
 
 <Tip>
-The catalog reloads when you return to the tab, so if the connection service was briefly unavailable while the provider's window was open, you do not need to refresh the whole page.
+The catalog reloads when you return to the tab, so if the integration provider was briefly unavailable while the authorization window was open, you do not need to refresh the whole page.
 </Tip>
 
 ### What is stored
 
-The credentials you enter go to Nango, the integrations service Receipt runs beside itself. Receipt keeps an encrypted reference to the Nango connection — ciphertext plus the organization, the scope it was connected in, the provider, the connection name and who created it. Provider credentials stay in Nango: the browser is served only the non-secret columns, and MCP client configs and sandboxes never contain them.
+The credentials you enter go to Nango, the integration provider Receipt runs beside itself. Receipt keeps an encrypted reference to the Nango connection — ciphertext plus the organization, the scope it was connected in, the provider, the connection name and who created it. Provider credentials stay in Nango: the browser is served only the non-secret columns, and MCP client configs and sandboxes never contain them. [Receipt Connect connections](/mcp-gateway/receipt-connect) sets out the four connection kinds, including the two imports that do hold a credential.
 
 The connect dialog has no name field, so every connection made from the web UI is named `default`, and the disconnect dialog reads `<provider>/default`. The dialog interpolates whatever name a connection carries, so one created through the API with a custom name shows that name instead.
 
@@ -102,7 +102,7 @@ That message comes from Linear, not from Receipt or Nango: the client id was acc
 https://<your-receipt-host>/oauth/callback
 ```
 
-Register it exactly: `https`, no port, no trailing slash. That is the address unless your deployment has customized the integrations service's own callback. The same rule applies to every OAuth provider on that deployment that uses custom rather than Nango-default credentials. No redeploy is needed; the provider validates the redirect at authorization time, so **Connect** works as soon as the application is saved. On the hosted app the deployment operator manages these registrations; on a self-hosted deployment, see [Integrations provider](/core/integrations-provider).
+Register it exactly: `https`, no port, no trailing slash. That is the address unless your deployment has customized the integration provider's own callback. The same rule applies to every OAuth provider on that deployment that uses custom rather than Nango-default credentials. No redeploy is needed; the provider validates the redirect at authorization time, so **Connect** works as soon as the application is saved. On the hosted app the deployment operator manages these registrations; on a self-hosted deployment, see [Integrations provider](/core/integrations-provider).
 
 ## Errors you might see
 
@@ -117,4 +117,4 @@ The first two name Organization Settings > Integrations even when the missing co
 
 Searching for an app that isn't in the catalog doesn't connect or enable anything. Instead, Receipt offers to file a development task to build that integration. The panel is titled **Build `<name>` with Beetle Tasks** (Beetle is the assistant's name in the interface) and explains that "New integrations are code changes": the task carries an objective for the catalog entry, Nango mapping, tests and PR evidence. The button reads **Create task** when GitHub is connected, **Connect GitHub first** when it can be connected from here, and a disabled **GitHub required** otherwise. The panel gives the reason: the worker needs GitHub to create a branch and a pull request.
 
-Next step: [organize connections into workspaces](/mcp-gateway/workspaces).
+Next step: [set up an MCP client](/mcp-gateway/quickstart).

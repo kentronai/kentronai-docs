@@ -5,7 +5,7 @@ description: "The receipt shape, what the hash covers, how the runtime folds a c
 
 Every run Receipt performs leaves a trail you can read back afterwards: what happened, in what order, and under whose authority. That trail is the product — the [Replay view](/co-worker/replay) of a background run is one of these trails rendered. Because each entry is hash-linked to the one before it, the trail is tamper-evident: the runtime verifies it on every replay rather than trusting it.
 
-Underneath, a receipt is an immutable record appended to a named stream. A stream is a hash-linked chain of receipts. Everything else in Receipt — job state, objective state, chat history — is a fold over one of those chains.
+Underneath, a receipt is an immutable record appended to a named stream. A stream is a hash-linked chain of receipts. Everything else in Receipt — job state, objective state, chat history — is a **fold** over one of those chains: the current value is not stored anywhere authoritative, it is computed by replaying the chain from the start and applying each receipt in turn.
 
 ## The receipt shape
 

@@ -7,8 +7,8 @@ Members belong to an [organization](/core/organizations-and-workspaces), not to 
 
 > `Manage organization members, pending invitations, permissions, and access status.`
 
-<Frame caption="Organization settings → Members. Invitations that have not been accepted sit at the top of the first page with an amber Pending badge; people who have joined show Active, and whoever created the organization holds Owner. Beetle runners in the left rail is the compute widget, not a settings page — Beetle is the assistant's name in the interface.">
-  <img src="/images/core/members.png" alt="The Members table listing four pending invitations and one active owner, with User, Email, Role and Status columns, a filter box, a Columns control and an Invite members button." />
+<Frame caption="Organization settings → Members. The two invitations that have not been accepted sit at the top of the first page with an amber Pending badge and the Member role; Alex, who created the organization, follows with Active and Owner. The three-dot menu at the end of a row holds Change role and Remove member on an active member, and only Cancel invitation on a pending one.">
+  <img src="/images/core/members.png" alt="The Members table with three rows — Dana Chen and Priya Natarajan, both Member and Pending, then Alex, Owner and Active — under User, Email, Role and Status columns, beside a Filter members box, a Columns control and an Invite members button." />
 </Frame>
 
 ## The three roles
@@ -39,7 +39,7 @@ So a plain member can open **Workspaces** and the **MCP Gateway**, and cannot op
 There is no access-denied screen. A user without the role for a page is silently redirected to the app root, so a settings link that appears to "do nothing" is the access gate refusing you. While your role is still resolving the page shows `Checking workspace access`, and the gate fails closed: a role it cannot read is denied, not allowed.
 </Warning>
 
-The route gate is not the only check. Each feature enforces its own authorization on the server independently, with its own refusal, such as `Only organization owners or admins can manage guardrails.` or `Only organization owners or admins can manage policies.` See [access control](/guard/access-control) for the full picture.
+The route gate is not the only check. Each feature enforces its own authorization on the server independently, with its own refusal, such as `Only organization owners or admins can manage guardrails.` or `Only organization owners or admins can manage policies.` [Access control](/guard/access-control) adds the second boundary these roles sit beside — the workspace role that decides who may rewire a Receipt workspace — and the two Guard surfaces that are not enforced at all.
 
 ## The Members page
 
@@ -109,7 +109,7 @@ An invite that would overflow fails with HTTP 403 and this message, surfaced per
 
 > `Only {n} users can access this workspace.`
 
-An organization that is over its limit is flagged on its entitlement, and the billing page shows the overflow on a seat bar labelled **Seat allocation** whose value reads `{activeMembers} of {seatCount} seats`; the members beyond the seat count are drawn as a red segment rather than named. If you change the plan and select fewer seats than you have active members, the dialog warns: `You selected {selectedSeats} seats for {activeMembers} active members. Everyone keeps access until period end, and extra members will be auto-restricted after renewal.`
+An organization that is over its limit is flagged on its entitlement, and the overflow is drawn on the Billing page's seat bar; choosing fewer seats than you have active members warns you there before you confirm. [Billing and plans](/core/billing-and-plans) covers both.
 
 ## Sharing a single workspace
 
@@ -123,4 +123,4 @@ Both paths require acceptance. When Receipt sends the invitation email the toast
 
 Until it is accepted, the invitation appears in that workspace's member list with a **Pending** badge, whichever of the two paths created it. A workspace owner or admin gets **Cancel invitation** in the row menu, which toasts `Invitation to {email} cancelled.` Accepted rows carry **Remove from workspace** instead, disabled on your own row (`You cannot remove your own access.`) and on the Default workspace (`Default membership follows the organization.`). [Workspaces](/mcp-gateway/workspaces) covers the rest of that page.
 
-Next step: [see what your organization's plan and seats cost](/core/billing-and-plans)
+Next step: [see what your organization's plan and seats cost](/core/billing-and-plans).

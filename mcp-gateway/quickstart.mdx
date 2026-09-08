@@ -10,14 +10,14 @@ Six commands give Codex — or any MCP client that can launch a local command �
 - An account on the hosted app at `app.kentron.ai`, or on your own deployment, signed in with an active organization.
 - The `receipt` CLI installed — see [Install the CLI](/cli/install).
 - Codex on your `PATH` if you want the managed install. `receipt mcp install codex` shells out to `codex mcp add` rather than editing the file itself, so it runs whatever `codex` resolves to; `--client-bin <path>` points it at another binary.
-- Ideally at least one connected app in the workspace. Without one, step 6 lists nothing — see [Connect an app](/mcp-gateway/connect-an-app).
+- At least one app already connected in the workspace you are configuring, which is the step you have just done in [Connect an app](/mcp-gateway/connect-an-app). Connecting inside a workspace needs workspace owner or admin, so if nobody has connected one yet and you do not hold that role, ask someone who does before you start — the tool list in step 6 is empty until a connection exists.
 
 ## Find the setup panel
 
-Open **MCP Gateway** in the sidebar. The panel headed **Use connections with Receipt CLI and MCP clients** sits on the gateway landing page and again at the top of every workspace's **Overview**. Its body names the workspace you are configuring — "Receipt CLI and the local MCP bridge use a workspace-bound token. The selected workspace is **Default**; its connections and permissions are isolated from other workspaces in this organization." — and the badge beside it reads **Default workspace** or **Workspace scoped**.
+Open **MCP Gateway** in the sidebar and click a workspace — pick **Default**, because that is the workspace a fresh CLI sign-in binds to. The sidebar entry lands you on the workspace list rather than on a panel; the panel headed **Use connections with Receipt CLI and MCP clients** sits at the top of every workspace's **Overview**. Its body names the workspace you are configuring — "Receipt CLI and the local MCP bridge use a workspace-bound token. The selected workspace is **Default**; its connections and permissions are isolated from other workspaces in this organization." — and the badge beside it reads **Default workspace** or **Workspace scoped**.
 
-<Frame caption="A workspace Overview. The setup panel carries the six numbered commands with a Copy button each, and marks steps 4 and 6 optional. Below it sit the Open integrations, LLM keys and Your access tiles, then the workspace tab strip and the Open integrations tab, where a Jira card reports '1 saved connection needs attention'.">
-<img src="/images/mcp-gateway/workspace-overview.png" alt="The workspace Overview page showing the setup panel with six numbered receipt commands, three summary tiles, the Open integrations / LLM keys / Settings / Dashboard tabs, and integration cards for Jira, Airtable and Anthropic." />
+<Frame caption="A workspace Overview. The setup panel carries the six numbered commands with a Copy button each, and marks steps 4 and 6 optional. Below it sit the Open integrations, LLM keys and Your access tiles, then the workspace tab strip and the Open integrations tab. The Open integrations tile reads 0 while the Jira card under it reports '1 saved connection needs attention' — the tile counts only providers whose connection is valid, and a connection that needs attention is not.">
+<img src="/images/mcp-gateway/workspace-overview.png" alt="The workspace Overview page showing the setup panel with six numbered receipt commands, tiles reading Open integrations 0, LLM keys 0 and Your access Owner, the Open integrations / LLM keys / Settings / Dashboard tabs, and integration cards for Jira, Airtable and Anthropic." />
 </Frame>
 
 Steps 4 and 6 are marked **(optional)** because the bridge works without them; they check the install rather than complete it. If a Copy button fails, the toast reads "Could not copy the command. Select and copy it instead."
@@ -143,10 +143,10 @@ Tool names are opaque aliases: a readable prefix followed by a 20-character dige
 - Connectors that share Receipt's generic proxy publish a single GET-only `read-provider-resource` tool.
 - Provider-native MCP connectors are **excluded from the aggregate list**. They stay reachable through `receipt tools list --connection <provider:name>`.
 - Connectors that authenticate a local CLI instead of storing credentials in Nango — `aws` and `jira-api` — publish nothing here.
-- Write tools appear only when your token carries `connect:write` — the CLI sign-in token does — **and** the connection's policy enables them, which an owner or admin sets per connection in [Manage tools](/mcp-gateway/tools-and-permissions).
+- Write tools appear only when your token carries `connect:write` — the CLI sign-in token does — **and** the connection's policy enables them, which a workspace owner or admin sets per connection in [Manage tools](/mcp-gateway/tools-and-permissions).
 - A connection whose tool surface cannot be read is skipped with a warning rather than failing the whole listing.
 
-An empty `tools` array means nothing in the workspace publishes an aggregate tool: no connection at all, none in the `valid` state, or only provider-native MCP and local-CLI connectors. Check `receipt workspace current`, then connect an app in that workspace's **Open integrations** tab.
+An empty `tools` array means nothing in the workspace publishes an aggregate tool: no connection at all, none in the `valid` state, or only provider-native MCP and local-CLI connectors. Check `receipt workspace current`, then [connect an app](/mcp-gateway/connect-an-app) in that workspace's **Open integrations** tab — which needs workspace owner or admin.
 </Step>
 </Steps>
 
@@ -226,6 +226,6 @@ Every call your client makes travels from the bridge to the aggregate server at 
 
 One gap to know about: calls made through the MCP bridge are not yet recorded as receipts, so they do not appear on the workspace's Gateway activity page. Calls made through `/connect/call` — which is what `receipt tools call --connection <provider:name>` uses — are. [Gateway activity](/mcp-gateway/gateway-activity) sets out exactly what is recorded.
 
-If a step failed with a message not covered here, [Troubleshooting](/mcp-gateway/troubleshooting) lists the gateway and CLI errors with their causes and fixes.
+The commands used on this page have their own reference pages: [Calling tools and wiring MCP clients](/cli/tools-and-mcp) for `receipt tools` and `receipt mcp`, and [Connecting providers from the CLI](/cli/connect) for `receipt connect status`, `list` and `call`. If a step failed with a message not covered here, [Troubleshooting](/mcp-gateway/troubleshooting) lists the gateway and CLI errors with their causes and fixes.
 
-Next step: [connect an app to the workspace](/mcp-gateway/connect-an-app).
+Next step: [organize connections into workspaces](/mcp-gateway/workspaces).

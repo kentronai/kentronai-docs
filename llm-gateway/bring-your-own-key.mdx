@@ -3,7 +3,7 @@ title: "Bring your own key"
 description: "Store your organization's own provider API key, save it in the scope Receipt actually reads, and know which credential pays for each request."
 ---
 
-Bringing your own key means model calls run on your provider account instead of on platform credit. You paste an OpenAI API key into Receipt, it is validated against the provider and encrypted before it is stored, and from then on matching requests execute against your key — with your rate limits, your billing and no spend reservation against your Receipt credit.
+Bringing your own key means model calls run on your provider account instead of on platform credit — the balance Receipt funds a turn from when you have no key of your own, described in [Usage and spend](/llm-gateway/usage-and-spend). You paste an OpenAI API key into Receipt, it is validated against the provider and encrypted before it is stored, and from then on matching requests execute against your key — with your rate limits, your billing and no spend reservation against your Receipt credit.
 
 There are two places to save one, and they are not the same key: the organization **BYOK** page, and a workspace's **LLM keys** tab. Which one Receipt reads depends on the request, so pick the scope deliberately — that section is below, and it is the part of this page most likely to surprise you.
 
@@ -33,7 +33,7 @@ The runtime supports two providers for BYOK — **OpenAI** and **Anthropic** —
 The page, at this release, renders **OpenAI only**. Anthropic is on a hidden list that the page's provider ordering filters out. That hiding is a presentation decision and nothing more: a key already stored for Anthropic stays encrypted in the database, and the gateway keeps honouring it at request time. So if your organization saved an Anthropic key before it was hidden, it is still in force even though the page no longer shows it.
 
 <Note>
-Background runs are OpenAI-only. Factory looks up provider `openai` and calls the OpenAI SDK, so an Anthropic key is honoured for direct chat answers but never for a background objective. See [Models and providers](/llm-gateway/models-and-providers) for what else is catalog preview rather than a working route.
+[Background runs](/co-worker/background-runs) — the durable objectives Receipt queues instead of answering you directly — are OpenAI-only. Factory, the engine that runs them, looks up provider `openai` and calls the OpenAI SDK, so an Anthropic key is honoured for direct chat answers but never for a background objective. See [Models and providers](/llm-gateway/models-and-providers) for what else is catalog preview rather than a working route.
 </Note>
 
 ## Validation happens before storage
@@ -66,8 +66,8 @@ Keys are stored per organization, per workspace and per provider, and the two su
 
 The organization BYOK page deliberately writes into a hidden organization-wide scope rather than into whichever workspace you happen to have open: it resolves an organization-scope workspace id and passes that explicitly. The **LLM keys** tab on a workspace's MCP Gateway overview embeds the same card but binds it to that workspace, so a key saved there is stored against that named workspace only.
 
-<Frame caption="The LLM keys tab of a workspace overview. It is the same OpenAI card as the BYOK page, but everything saved here belongs to this workspace — the tile above it counts the workspace's own keys.">
-  <img src="/images/llm-gateway/workspace-llm-keys.png" alt="A workspace overview page titled Overview, described as 'Connections, LLM keys, and access for Default.', with tabs Open integrations, LLM keys, Settings and Dashboard; the LLM keys tab shows an OpenAI API Key card reading 'Not configured, requests will continue using Receipt defaults.' with an sk-… field and a Save key button." />
+<Frame caption="The LLM keys tab of the Default workspace's Overview page, below the CLI setup panel that heads every workspace overview. It is the same OpenAI card as the BYOK page, but everything saved here belongs to this workspace — the LLM keys tile above it reads 0 and counts this workspace's own keys, not the organization's.">
+  <img src="/images/llm-gateway/workspace-llm-keys.png" alt="A workspace overview page titled Overview, described as 'Connections, LLM keys, and access for Default.'. A panel headed 'Use connections with Receipt CLI and MCP clients' lists six copyable commands from receipt setup to receipt tools list, then three tiles read Open integrations 0, LLM keys 0 and Your access Owner. Below them the tab strip Open integrations, LLM keys, Settings and Dashboard has LLM keys selected, showing an OpenAI API Key card reading 'Not configured, requests will continue using Receipt defaults.' with an sk-… field and a Save key button." />
 </Frame>
 
 The consequence is worth stating plainly, because it looks like a bug when you meet it: **a key saved from the organization BYOK page is not visible from a named workspace, and a key saved against a named workspace is not visible to any path that resolves through the organization scope.** Isolation between the two is exact, and organizations never see each other's keys. If you are looking for a key you are sure you saved, check which scope you saved it in. For the difference between the two containers, see [Organizations and workspaces](/core/organizations-and-workspaces).
@@ -91,27 +91,17 @@ This is read from the implementation rather than measured on a live deployment. 
 
 Keys live in the `org_provider_api_key` table, keyed by organization, workspace and provider. The row holds ciphertext, an initialization vector, an authentication tag, a key version and timestamps. It never holds plaintext.
 
-Encryption is AES-256-GCM with a 32-byte wrapping key and a 12-byte random IV, written at key version 1. The wrapping key does not come from the database — it comes from deployment configuration, in the environment variable `BYOK_ENCRYPTION_KEY_B64`, so that a database-only leak is not enough to recover a provider credential. That variable must decode to exactly 32 bytes. Until it does, saving or reading a BYOK key fails with one of these errors:
-
-```
-Missing required environment variable BYOK_ENCRYPTION_KEY_B64.
-BYOK_ENCRYPTION_KEY_B64 must be valid base64.
-BYOK_ENCRYPTION_KEY_B64 must decode to exactly 32 bytes.
-```
-
-If the table itself has not been created yet, the operator-facing error is **"BYOK key storage is not initialized. Run the BYOK migration first."**
+Encryption is AES-256-GCM with a 32-byte wrapping key and a 12-byte random IV, written at key version 1. The wrapping key does not come from the database — it comes from deployment configuration, in the environment variable `BYOK_ENCRYPTION_KEY_B64`, so that a database-only leak is not enough to recover a provider credential. [Gateway configuration](/llm-gateway/configuration) lists the errors that variable produces when it is missing or the wrong length, and why rotating it after keys have been saved destroys them.
 
 The only value derived from the key that is ever written to a log is a **fingerprint** — the first 12 hexadecimal characters of a SHA-256 of the key. It is not reversible and it is not a prefix of the key. The structured logs around the key path carry that fingerprint and nothing secret.
 
 <Warning>
-**Do not rotate `BYOK_ENCRYPTION_KEY_B64` once keys have been saved.** Decryption hard-fails on any key version other than the one a row was written with (`Unsupported BYOK key version: {n}`), and there is no re-encryption or rotation routine anywhere in the product. Rotating the wrapping key therefore makes **every stored provider key permanently undecryptable**, and the only recovery is for every organization to re-enter its keys by hand.
-
-The same applies to `RECEIPT_CONNECTION_ENCRYPTION_KEY_B64`, the wrapping key for Receipt Connect connection references. Generate both once, store them where you store your other deployment secrets, and treat rotating either as a destructive migration you would have to perform manually. See [Configuration](/core/configuration).
+**Do not rotate `BYOK_ENCRYPTION_KEY_B64` once keys have been saved.** Every stored provider key becomes permanently undecryptable and each organization has to re-enter its keys by hand. The same applies to `RECEIPT_CONNECTION_ENCRYPTION_KEY_B64`, the wrapping key for Receipt Connect connection references. See [Gateway configuration](/llm-gateway/configuration).
 </Warning>
 
 ## Which credential actually pays for a request
 
-Once a model has cleared the catalogue and [policy](/llm-gateway/model-policy) checks, Receipt resolves the credential in this order:
+Once a model has cleared the catalog and [policy](/llm-gateway/model-policy) checks, Receipt resolves the credential in this order:
 
 1. **A workspace Models account credential.** If the request carries a workspace and a user, and a configured [Models account](/llm-gateway/models-and-providers) resolves to a credential that can route this model, that key is used. Models accounts win over everything below, and they are the one path the organization snapshot cannot short-circuit.
 2. **A short-circuit to platform credit.** If strict mode is off and the organization's provider-key summary has been written at least once and says there is no key anywhere, resolution stops here with no override.
@@ -124,7 +114,7 @@ A request that carries an override is also exempt from Receipt's spend controls 
 
 ## Strict mode
 
-Setting the environment variable `CHAT_REQUIRE_BYOK=true` — it is compared as a literal string, and ships as `false` — makes an organization-managed provider key mandatory instead of preferred. Its description in the configuration template is **"Optional strict mode. Set true only when every model request must use a workspace-managed provider key instead of the platform-credit gateway."**
+Setting the environment variable `CHAT_REQUIRE_BYOK=true` makes an organization or workspace provider key mandatory instead of preferred: the lookup reads the request's workspace scope when the turn carries a workspace and the organization scope otherwise. Strict mode disables the step 2 short-circuit to platform credit, but step 3 still applies: a provider the organization-scope summary marks as unconfigured is passed over, the trap described above under *Where a key lives*. It ships as `false`, and [Gateway configuration](/llm-gateway/configuration) covers the variable itself.
 
 Strict mode adds three denials that cannot otherwise occur, each carrying a machine-readable reason:
 

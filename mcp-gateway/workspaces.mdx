@@ -22,7 +22,7 @@ The same workspace table appears in two places, and they are not equivalent.
 | **MCP Gateway** (the landing page) | The setup panel, then the workspace list. Row menu offers **View details** only. Creating a workspace here opens it. |
 | Organization settings → **Workspaces** | The full management surface: search, pagination, and a row menu with **View details**, **Rename**, **Share** and **Delete**. |
 
-In the sidebar, the **MCP Gateway** area lists only **Workspaces** while you are at gateway level, and the area heading points at the same place — the landing page has no sidebar entry of its own. Once you open a workspace the area lists only **All workspaces**. Clicking any row in either table opens that workspace's **Overview**.
+In the sidebar, the **MCP Gateway** area lists only **Workspaces** while you are at gateway level, and both that entry and the area heading itself lead to Organization settings → **Workspaces**. The landing page has no sidebar entry of its own, so the second table is the one you meet by clicking. Once you open a workspace the area lists only **All workspaces**. Clicking any row in either table opens that workspace's **Overview**, which is where the setup panel and the tabs live.
 
 ## The workspace table
 
@@ -31,14 +31,14 @@ Columns are `#`, **Workspace**, **Sharing and tools**, **Updated** and **Actions
 **Sharing and tools** is one column holding two independent facts, each shown only when it is true:
 
 - A group icon, labelled `<name> is shared`, once the workspace has any member other than you **or** a pending invitation. An invitation counts from the moment it is sent, so the row reads as shared while the recipient is still deciding.
-- A wrench, labelled `<name> has tools enabled`, when the workspace has at least one connected integration. Despite the label, the test is connection presence, not the per-connection allowlist — that lives with the connection itself, and reading it would cost a request per row. [Tools and permissions](/mcp-gateway/tools-and-permissions) is where you see what is actually published.
+- A wrench, labelled `<name> has tools enabled`, when the workspace has at least one connection. Despite the label, the test is connection presence, not the per-connection allowlist — that lives with the connection itself, and reading it would cost a request per row. [Tools and permissions](/mcp-gateway/tools-and-permissions) is where you see what is actually published.
 
 The list contains only workspaces you are a member of: the query joins your own membership row, so a workspace nobody has let you into is not listed. When there is nothing to show the table reads `No workspaces yet.`, or `No workspace matches this search.` when a search is filtering it. The MCP Gateway landing page prints `No workspaces yet. Create one to get started.` in place of the table.
 
 ## Create a workspace
 
-<Frame caption="Organization settings → Workspaces, with the Create workspace dialog open over the list. Note the submit button here is Save workspace, and that the Default row is marked as active and carries the wrench icon for a workspace that has a connected integration.">
-  <img src="/images/mcp-gateway/new-workspace.png" alt="The Workspaces page behind a Create workspace dialog containing a Workspace name field, a Cancel button and a Save workspace button." />
+<Frame caption="The Create workspace dialog on Organization settings → Workspaces: the line 'Workspace names help people choose the correct authorization boundary.', an empty Workspace name field, and Cancel beside the submit button, which reads Save workspace on this entry point. The list behind the dialog is blurred out.">
+  <img src="/images/mcp-gateway/new-workspace.png" alt="A Create workspace dialog containing a Workspace name field, a Cancel button and a Save workspace button, over a blurred Workspaces page." />
 </Frame>
 
 **New workspace** starts it — from the page header on the Workspaces page, and from the workspace list's own header on the MCP Gateway landing page. Either way you get a **Create workspace** dialog described as `Workspace names help people choose the correct authorization boundary.` The **Workspace name** field accepts up to 80 characters. An empty name gives `Enter a workspace name.`, and a name whose slug collides with an existing workspace is refused by the server with `a workspace with this name already exists`. Success toasts `{name} workspace created.`

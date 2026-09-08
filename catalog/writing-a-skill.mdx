@@ -78,21 +78,17 @@ Re-uploading is how you edit. Receipt compares content, not file names: identica
 
 ## Writing one an agent will open
 
-Every enabled skill is mounted for a run and listed in a compact catalog carrying each skill's name, description, version, content hash and path. Mounting follows the run's authorization: runs started from chat, Slack and Teams carry your organization, while an objective started without an organization context — from the in-repo developer CLI, for example — receives no organization skills at all. The run's own context tells the agent so, in these words:
-
-> All enabled organization skills are mounted for this run and cataloged at `receipt/skills/index.json`; Codex chooses which catalog entries to load.
-
-Nothing ranks those entries or matches them to the request. One of Receipt's own skills, copied into every run, states the intended reading discipline — read the catalog, "select the smallest relevant set using the task, plan, and catalog metadata", do not read every `SKILL.md` merely because it is mounted, and read each selected file completely before acting on it. Nothing in the run's prompt points the agent at that file, so whether it follows the discipline on any given run is its decision, not a rule Receipt enforces.
+Every enabled skill is mounted read-only into each new run and listed in a compact catalog carrying only each skill's name, description, version, content hash and path; nothing ranks those entries or matches them to the request, and the agent decides which files to open. [Skills](/catalog/skills) covers that mounting, and the reading discipline Receipt asks the agent to follow, in full.
 
 Four consequences for how you write the file:
 
 **The description is the routing surface.** With the name, it is the only part of the catalog entry that says what your skill is for. Write it as a trigger — when this skill applies, and to what — rather than as a summary. `Use when asked to produce or refresh the quarterly revenue report…` earns an open; `Notes about reporting` does not.
 
-**Keep one skill to one job.** A short file that gets opened is worth more than a manual that gets skipped, and the reading discipline above explicitly discourages loading everything.
+**Keep one skill to one job.** A short file that gets opened is worth more than a manual that gets skipped, and that discipline explicitly discourages loading everything.
 
 **Make it self-contained.** The catalog carries metadata only, and your upload is a single file, so anything the agent needs has to be in the body you wrote.
 
-**Do not ask a skill to change its own surroundings.** The mounted catalog is controller-owned and read-only; the skill that states that discipline also tells the agent never to edit it, copy it into a patch, or report it as its own output, and — whatever the agent does — a run rejects a patch that touches those paths.
+**Do not ask a skill to change its own surroundings.** The mounted catalog is read-only, and a run rejects any patch that touches those paths, so an instruction to edit or rewrite a skill in place cannot succeed.
 
 <Note>
 A skill is instructions, not permission. Task scope, the user's authorization and Receipt's execution constraints take precedence over anything a skill says, so a skill cannot widen what a run may do — write allowlists still decide that, per connection. See [tools and permissions](/mcp-gateway/tools-and-permissions).

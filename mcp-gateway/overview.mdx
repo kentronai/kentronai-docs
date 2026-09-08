@@ -3,38 +3,50 @@ title: "What the MCP Gateway does"
 description: "Connect your apps once, decide which operations agents may call, and let an MCP client use them without ever holding a provider credential."
 ---
 
-The MCP Gateway holds the apps your organization has connected and hands them to agents as tools. You connect an app once — 63 connectable apps sit inside a browsable directory of about 900 — an owner or admin decides which operations that connection may perform, and Codex or another MCP client calls them through a single server. The provider credential stays in Nango, the integration service behind Receipt Connect, and is attached on the server, so no MCP client config ever holds it.
+The MCP Gateway holds the apps your organization has connected — GitHub, Jira, Gmail, AWS and the rest — and hands them to agents as tools. **MCP** is the Model Context Protocol, the open standard an AI agent uses to discover and call tools, and any program that speaks it is an **MCP client**; Codex, OpenAI's coding agent, is the one Receipt can configure for you.
+
+You connect an app once through **Receipt Connect**, the part of Receipt that owns connections — 63 connectable apps sit inside a browsable directory of about 900 — an owner or admin decides which operations that connection may perform, and an MCP client calls them through a single server. The provider credential stays in Nango, the integration provider Receipt runs beside itself, and is attached to the request on the server, so no MCP client config ever holds it.
 
 ## What you can do
 
 <CardGroup cols={2}>
-<Card title="Set up an MCP client" href="/mcp-gateway/quickstart">
-Sign in, install the Codex bridge, confirm the workspace, list the tools.
-</Card>
 <Card title="Connect an app" href="/mcp-gateway/connect-an-app">
-Connect for chat and Slack, or inside a workspace for the CLI and MCP clients.
+Authorize a provider account for chat and Slack, or inside one workspace for the CLI and MCP clients.
+</Card>
+<Card title="Set up an MCP client" href="/mcp-gateway/quickstart">
+Sign in with the CLI, install the Codex bridge, confirm the workspace, list the tools.
 </Card>
 <Card title="Isolate work in workspaces" href="/mcp-gateway/workspaces">
-Each workspace has its own connections, action permissions, members and activity.
+Create, share, rename and delete the boundaries that hold connections, permissions and CLI sessions.
+</Card>
+<Card title="See where a connection lives" href="/mcp-gateway/connection-scopes">
+Which surface reads which scope, and why an app connected for chat is invisible to the CLI.
+</Card>
+<Card title="Understand a connection" href="/mcp-gateway/receipt-connect">
+What Receipt stores and does not store, how a connection is addressed, what each connector publishes.
 </Card>
 <Card title="Decide what agents may call" href="/mcp-gateway/tools-and-permissions">
-Reads are on by default; writes stay off until an owner or admin enables them.
+Every published operation sits on a per-connection allowlist, and writes stay off until an owner or admin enables them.
 </Card>
 <Card title="Read the server reference" href="/mcp-gateway/aggregate-server">
-Protocol versions, opaque tool names, publication rules and the route table.
+Protocol versions, opaque tool aliases, publication rules, error shapes and the route table.
+</Card>
+<Card title="Watch gateway activity" href="/mcp-gateway/gateway-activity">
+One workspace's tool traffic, and which calls reach the dashboard and which never will.
 </Card>
 <Card title="Understand the security model" href="/mcp-gateway/security-model">
 Token shapes, what a stolen session file can do, what never leaves the server.
 </Card>
+<Card title="Fix a failing call" href="/mcp-gateway/troubleshooting">
+The gateway, connection and CLI error strings, each with its cause and its fix.
+</Card>
 </CardGroup>
-
-Also here: [where a connection lives](/mcp-gateway/connection-scopes), [what a connection is](/mcp-gateway/receipt-connect), [gateway activity](/mcp-gateway/gateway-activity) and [troubleshooting](/mcp-gateway/troubleshooting).
 
 ## Two scopes, one gateway
 
 Every connection belongs to exactly one scope, and the scope decides which agents can reach it.
 
-**Global Integrations** is the organization-wide scope, described on its own page as "Connected once for the whole organization and available to Receipt chat. Workspace-scoped connections for CLI and MCP clients live under MCP Gateway." Web chat and the Slack app read it; the Teams app reads the **Default** workspace instead.
+**Global Integrations** is the organization-wide scope: an app connected there is available to Receipt chat for the whole organization. Web chat and the Slack app read it; the Teams app reads the **Default** workspace instead. [Connect an app](/mcp-gateway/connect-an-app) walks through that page.
 
 **Workspaces** are what the CLI and MCP clients read. Every organization has a Default workspace that cannot be deleted, and owners and admins create named ones beside it. Signing the CLI in binds your session to Default; `receipt workspace use <name>` moves it.
 
@@ -82,7 +94,7 @@ Every config the CLI writes is checked before it is saved: one containing the se
 - **Receipts.** Each `POST /connect/call` writes a `tool.called` event and, on success, a `tool.observed` event into that workspace's receipt stream, with the recorded output truncated to 2,000 characters.
 
 <Warning>
-**Tool calls made through the MCP bridge are not yet recorded as receipts.** `POST /connect/mcp` — the endpoint behind `receipt mcp serve`, and behind `receipt tools call` without `--connection` — writes no `tool.called` or `tool.observed` event, so those calls do not appear on [Gateway activity](/mcp-gateway/gateway-activity). Calls through `receipt connect call`, `receipt tools call --connection` and background runs are recorded.
+**Tool calls made through the MCP bridge are not yet recorded as receipts.** Calls through `receipt connect call`, `receipt tools call --connection` and background runs are. [The aggregate MCP server](/mcp-gateway/aggregate-server) sets out which route each command takes, and [Gateway activity](/mcp-gateway/gateway-activity) shows what reaches the dashboard.
 </Warning>
 
-Next step: [set up an MCP client](/mcp-gateway/quickstart).
+Next step: [connect an app](/mcp-gateway/connect-an-app).

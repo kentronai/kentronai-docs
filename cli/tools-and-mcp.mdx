@@ -3,7 +3,7 @@ title: "Calling tools and wiring MCP clients"
 description: "Use receipt tools to list, inspect and call gateway tools, and receipt mcp to generate or install a client configuration."
 ---
 
-Everything your connections publish is callable from the terminal. `receipt tools` lists the tools your workspace can use, shows what one takes, and runs it. `receipt mcp` points another client — Codex, or anything that speaks MCP over stdio — at the same set, without writing a credential into that client's configuration.
+Everything your connections publish is callable from the terminal. A **tool** is one operation a connected app publishes — searching a mailbox, listing the issues in a repository — and `receipt tools` lists the ones your workspace can use, shows what one takes, and runs it. `receipt mcp` points another client — Codex, or anything that speaks MCP over stdio — at the same set, without writing a credential into that client's configuration.
 
 Both are scoped by the workspace bound into your session token, so [switching workspaces](/cli/workspaces) changes which tools appear. The gateway behind them is the aggregate MCP server at `POST /connect/mcp`; [the aggregate server](/mcp-gateway/aggregate-server) explains what it publishes and why.
 
@@ -50,7 +50,7 @@ The saved session wins here, and the environment is only the fallback. That is t
 | `--output <path>`, `--output-file <path>` | Write the envelope to a file atomically at mode `0600`, and print `{ok, outputFile, bytes}` |
 
 <Warning>
-`--json` on `receipt tools` is the **tool-argument payload**, not an output switch. Output is always JSON, whether or not you pass it. If you type `receipt tools call <tool> --json` expecting pretty output, you are passing arguments to the tool.
+`--json` on `receipt tools` is the **tool-argument payload**, not an output switch. Output is always JSON, whether or not you pass it. Use `--json` only to give a tool its arguments; anything that is not a JSON object fails with `--json must be a JSON object`.
 </Warning>
 
 <Warning>
@@ -77,23 +77,23 @@ For a legacy session with no workspace id, the block reads `{"kind": "organizati
 
 ### Tool names are opaque aliases
 
-Aggregate tool names look like `receipt_github_work_list_repositories_3f9a...` — a readable prefix followed by a digest. The digest binds the name to one exact stored connection and one reviewed upstream tool, which is why two connections for the same provider never collide.
+Aggregate tool names look like `receipt_google_mail_work_search_messages_4c1e0b7a9d2f36581bca` — the provider, the connection's name and the upstream tool, followed by a 20-character digest. The digest binds the name to one exact stored connection and one reviewed upstream tool, which is why two connections for the same provider never collide.
 
 <Warning>
 Copy tool names from `receipt tools list`. Never construct or edit one. The gateway's own instructions to MCP clients say so: "Tool names from tools/list are opaque; use them exactly and never construct aliases."
 </Warning>
 
-The same instructions cover two more rules worth repeating: read-only annotations are authoritative, and you should re-list tools after switching workspaces or reconnecting a provider.
+The same instructions cover two more rules worth repeating: read-only annotations are authoritative, and you should re-list tools after switching workspaces or reconnecting.
 
 ### What shows up in `tools list`
 
 The aggregate list includes only connections in your token's workspace that are valid, and:
 
-- Connectors with a typed manifest publish exactly their manifest tools.
-- Connectors without one publish a single GET-only `read-provider-resource` tool.
+- Connectors with a typed manifest publish their manifest tools. Connectors without one publish a single GET-only `read-provider-resource` tool.
 - Provider-native MCP connectors are **excluded from the aggregate list**. They remain reachable through `receipt tools --connection <connection>`.
-- Write tools appear only when your token carries `connect:write` and the connection's policy enables them.
-- One unhealthy connection is skipped with a warning rather than failing the whole listing.
+- Connectors that authenticate with a local CLI credential rather than a stored one — AWS and Jira API Token — are excluded from it too.
+- A tool appears only while it is on the connection's allowlist. A write tool additionally needs an owner or admin to have enabled writes for that connection, plus a token carrying `connect:write`; there is no per-action approval prompt in this release ([tools and permissions](/mcp-gateway/tools-and-permissions)).
+- A connection whose tool surface cannot be discovered is skipped and logged on the server, rather than failing the whole listing.
 
 ### A successful envelope does not mean the provider succeeded
 
@@ -107,10 +107,10 @@ Failures at the JSON-RPC level do throw, and you will see them as errors: `Unkno
 
 ### Which calls are recorded
 
-`receipt tools call --connection <connection>` goes to `POST /connect/call`, which writes `tool.called` and `tool.observed` receipts and appears on the workspace's [Gateway activity](/mcp-gateway/gateway-activity) dashboard.
+`receipt tools call --connection <connection>` goes to `POST /connect/call`, which writes a `tool.called` receipt — plus a `tool.observed` receipt when the call succeeds — carrying the workspace, so the call appears on that workspace's [Gateway activity](/mcp-gateway/gateway-activity) dashboard. A failed call records the `tool.called` receipt with its error.
 
 <Warning>
-**Aggregate calls are not recorded as tool receipts in this release.** `receipt tools call` without `--connection`, and every call an MCP client makes through `receipt mcp serve`, go to `POST /connect/mcp`, which does not write `tool.called` or `tool.observed`. Those calls do not show up on the Gateway activity dashboard. If you need a recorded trail for a specific call, make it with `--connection`.
+**Tool calls made through the MCP bridge are not yet recorded as receipts.** `receipt tools call` without `--connection`, and every call an MCP client makes through `receipt mcp serve`, go to `POST /connect/mcp` and leave nothing on the Gateway activity dashboard — [the aggregate server](/mcp-gateway/aggregate-server) documents the gap. If you need a recorded trail for a specific call, make it with `--connection`.
 </Warning>
 
 ## `receipt mcp`

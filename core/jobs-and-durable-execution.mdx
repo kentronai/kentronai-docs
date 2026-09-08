@@ -3,7 +3,7 @@ title: "Jobs, lanes, and durable execution"
 description: "The four job lanes, the job lifecycle receipts, singleton and idempotency rules, the lease and recovery defaults, and how a job survives a worker dying."
 ---
 
-Everything Receipt does in the background is a job: the run you start from a chat message, the task you file on the **Beetle Tasks** page (Beetle is the assistant's name in the interface), the objective you launch from the [developer CLI in the repository](/cli/from-source/factory-overview). A job is enqueued by appending a receipt, executed by a worker under a lease, and settled by appending a terminal receipt. Nothing about that path depends on a process staying alive.
+Everything Receipt does in the background is a job: the run you start from a chat message, the task you file on the **Beetle Tasks** page (Beetle is the assistant's name in the interface), the objective you launch from the [developer CLI in the repository](/cli/from-source/factory-overview) — an objective being one written goal that [Factory](/core/factory-engine) plans into a graph of tasks, each of which becomes jobs of its own. A job is enqueued by appending a receipt, executed by a worker under a lease, and settled by appending a terminal receipt. Nothing about that path depends on a process staying alive.
 
 That is what makes a run resumable. If the worker holding your task is killed mid-run, the job's state is still on its receipt stream, its lease eventually expires, and a recovery loop hands it back out.
 

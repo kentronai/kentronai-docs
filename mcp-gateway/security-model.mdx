@@ -11,7 +11,7 @@ The gateway exists so an agent can use your connected apps without ever holding 
 
 ## What actually holds
 
-- **Credentials for apps you connect through the interface stay in Nango**, the integration service behind Receipt Connect. Receipt stores a pointer, not the secret. Two import-only connection kinds are the exception, and they are covered below.
+- **Credentials for apps you connect through the interface stay in Nango**, the integration provider behind Receipt Connect. Receipt stores a pointer, not the secret. Two import-only connection kinds are the exception, and they are covered below.
 - **MCP client configs are token-free by construction.** The generated config is checked before it is written, and the check refuses anything containing the session token or credential material.
 - **A sandbox worker never receives the provider keys behind your connected apps.** It gets generated CLI configuration and a Receipt credential helper.
 - **Writes need two independent gates** — the token's scope and the connection's own allowlist. See [Tools and permissions](/mcp-gateway/tools-and-permissions).
@@ -21,7 +21,7 @@ What that does *not* say is that the server's secrets are unimportant, or that t
 
 ## The tokens
 
-Every call into the gateway carries a Receipt Connect token: an HS256 JWT with an issuer of `receipt`, an audience of `receipt-connect`, one organization id, one workspace id, a scope list and an expiry. Nothing else authenticates a gateway call, with one exception: `POST /connect/nango/webhook`, which the integration service calls, is verified by an HMAC-SHA256 signature over the raw request body instead.
+Every call into the gateway carries a Receipt Connect token: an HS256 JWT with an issuer of `receipt`, an audience of `receipt-connect`, one organization id, one workspace id, a scope list and an expiry. Nothing else authenticates a gateway call, with one exception: `POST /connect/nango/webhook`, which the integration provider calls, is verified by an HMAC-SHA256 signature over the raw request body instead.
 
 ### Three scopes
 
@@ -78,35 +78,26 @@ These are server-side values. They are never sent to a browser, a CLI, a client 
 
 ## Where credentials actually live
 
-A connection row stores an encrypted payload whose contents depend on its kind. Only two kinds hold a real secret, and both are explicit, user-initiated imports.
+A connection row stores an encrypted payload whose contents depend on its kind, and [Receipt Connect connections](/mcp-gateway/receipt-connect) sets out all four kinds. Only two of them hold a real secret: `aws-credential-process` and `github-token`.
 
-| Kind | What is stored | A real credential? |
-|---|---|---|
-| `nango-reference` | The provider plus Nango's integration and connection ids | No — a pointer into Nango |
-| `local-aws-profile` | An AWS profile **name** | No |
-| `aws-credential-process` | An imported AWS credential bundle | **Yes** |
-| `github-token` | An imported GitHub token | **Yes** |
-
-Everything you connect through the interface is a `nango-reference`. Neither importing kind is created from the web interface — both arrive through `POST /connect/credential/github/import` and `POST /connect/credential/aws/import` — and neither ever publishes a tool to the aggregate MCP server, which only ever lists `nango-reference` connections in the `valid` state.
+Both are explicit, user-initiated imports. Neither is created from the web interface — they arrive through `POST /connect/credential/github/import` and `POST /connect/credential/aws/import` — and neither ever publishes a tool to the aggregate MCP server, which only ever lists `nango-reference` connections in the `valid` state. Everything you connect through the interface is a `nango-reference`: the provider plus Nango's integration and connection ids, a pointer rather than a secret.
 
 ### The encryption
 
 Both the references and the two imports live in the `org_connection_secret` table as `ciphertext`, `iv`, `auth_tag` and `key_version`, encrypted with **AES-256-GCM** using a 12-byte IV and key version 1. The wrapping key comes from deployment configuration (`RECEIPT_CONNECTION_ENCRYPTION_KEY_B64`) and must decode to exactly 32 bytes, so a database-only leak does not yield plaintext.
 
 <Note>
-Organization provider API keys for models are a separate store with a separate key (`BYOK_ENCRYPTION_KEY_B64`), described in [Bring your own key](/llm-gateway/bring-your-own-key). Rotating either wrapping key after material is stored makes that material permanently undecryptable — there is no re-encryption routine. For what the deployment stores and sends beyond the gateway, see [Data handling, telemetry, and security](/guard/data-handling-and-security).
+Organization provider API keys for models are a separate store with a separate key (`BYOK_ENCRYPTION_KEY_B64`), described in [Bring your own key](/llm-gateway/bring-your-own-key). Rotating either wrapping key after material is stored cannot be undone — [LLM Gateway configuration](/llm-gateway/configuration) has the rule and the errors it produces. For what the deployment stores and sends beyond the gateway, see [Data handling and security](/guard/data-handling-and-security).
 </Note>
 
 ## What the browser is allowed to replicate
 
-The browser replication layer does not mirror the connection table. The publication declares an **explicit column list** for `org_connection_secret` — `id`, `organization_id`, `workspace_id`, `provider`, `name`, `kind`, `status`, `expires_at`, `last_validated_at`, `created_at`, `updated_at`.
-
-Ciphertext, IV, auth tag, key version and internal ownership metadata are therefore never replicated to a client, even though connection `status`, which the interface does need, lives in the same table.
+The browser replication layer does not mirror the connection table. The publication declares an **explicit column list** for `org_connection_secret`, so ciphertext, IV, auth tag, key version and internal ownership metadata are never replicated to a client, even though connection `status`, which the interface does need, lives in the same table. [Data handling and security](/guard/data-handling-and-security) names the eleven columns that are replicated.
 
 ## What never reaches a sandbox or a client config
 
 - The provider credentials Receipt Connect holds: raw provider API keys, OAuth access and refresh tokens, and provider client secrets. A worker receives generated CLI configuration plus a Receipt credential helper instead.
-- The integration service's environment secret key, which the server uses to authenticate Receipt's own calls to that service.
+- The integration provider's environment secret key, which the server uses to authenticate Receipt's own calls to it.
 - The integrations database URL. Startup hands it to the Receipt server process only; it is not written into CLI artifacts, and it is not one of the variables a sandbox worker's environment is built from.
 - A token inside a generated MCP client config. Before writing one, the CLI serializes it and refuses it if it contains the session token — `refusing to install an MCP client config containing the Receipt session token` — or matches a credential-material pattern — `refusing to install an MCP client config containing credential material`. The bridge is a launcher that reads the saved session at run time instead.
 - Ambient AWS instance credentials. Sandbox workers run with `AWS_EC2_METADATA_DISABLED=true`, so EC2 or ECS instance metadata cannot stand in for a Receipt Connect credential.
@@ -129,10 +120,10 @@ Every execution route requires `connect:credential`. The aggregate MCP server an
 The caller must still be a member of the token's workspace. If membership was revoked after the token was issued, the call returns `403` with `workspace_membership_required` — this is the one revocation-like control that works mid-token.
 </Step>
 <Step title="Connection lookup">
-Organization and workspace are part of the same query as the connection selector, so a valid connection id from another organization can never be used as a credential lookup. Tool names published by the aggregate server are opaque aliases: a readable prefix plus a SHA-256 digest over the connection id, provider, connection name and upstream tool name. A call resolves an alias only against the bindings composed from the caller's own organization and workspace, so an alias minted anywhere else matches nothing and comes back as `Unknown or unavailable tool`.
+Organization and workspace are part of the same query as the connection selector, so a valid connection id from another organization can never be used as a credential lookup. The opaque tool aliases the aggregate server publishes resolve only against the bindings composed from the caller's own organization and workspace, so an alias minted anywhere else matches nothing and comes back as `Unknown or unavailable tool` — [the aggregate server](/mcp-gateway/aggregate-server) explains how an alias is built.
 </Step>
 <Step title="Allowlist">
-The action must be enabled in that connection's policy. Unknown actions and disabled actions return the same message — `integration action not found or disabled` — so a caller cannot probe for hidden tools.
+The action must be enabled in that connection's policy, and unknown actions and disabled actions return the same message — `integration action not found or disabled` — so a caller cannot probe for hidden tools. [Tools and permissions](/mcp-gateway/tools-and-permissions) covers how that allowlist is set.
 </Step>
 </Steps>
 
@@ -141,7 +132,7 @@ The action must be enabled in that connection's policy. Unknown actions and disa
 Calls through `POST /connect/call` write a `tool.called` receipt and, on success, a `tool.observed` receipt into a per-workspace stream, with tool output truncated to 2,000 characters. Receipts are tamper-evident, SHA-256 hash-chained records verified on replay.
 
 <Warning>
-**Tool calls made over the MCP protocol are not receipted.** The aggregate MCP server does not write `tool.called` or `tool.observed`, so a call from Codex through the bridge, or from `receipt tools call` without a connection, leaves no receipt and does not appear on [Gateway activity](/mcp-gateway/gateway-activity). Only `/connect/call` invocations — `receipt connect call`, `receipt tools call --connection`, and sandbox agent commands — are recorded.
+**Tool calls made through the MCP bridge are not yet recorded as receipts.** Only `/connect/call` invocations are, so a call from Codex through the bridge leaves no receipt and does not appear on [Gateway activity](/mcp-gateway/gateway-activity). [The aggregate MCP server](/mcp-gateway/aggregate-server) sets out which route each command takes; the gates above apply to both routes identically.
 </Warning>
 
 ## Sign-in codes

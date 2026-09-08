@@ -3,7 +3,9 @@ title: "The aggregate MCP server"
 description: "One endpoint publishes every eligible connection in your workspace as an opaque tool alias, with fixed publication rules, error shapes and route scopes."
 ---
 
-Receipt publishes **one** aggregate MCP server, at `POST /connect/mcp`. Every eligible connection in the workspace your token is bound to is flattened into a single tool namespace, so a client attaches once rather than once per provider. You rarely type that path yourself: `receipt mcp serve` is the stdio bridge that speaks to it, and `receipt tools list`, `receipt tools describe` and `receipt tools call` use the same endpoint when you do not name a connection. See [set up an MCP client](/mcp-gateway/quickstart) for the client side.
+This is the reference page for the server your MCP client actually talks to. Receipt publishes **one** aggregate server rather than one per connected app: every eligible connection in the workspace your token is bound to is flattened into a single tool namespace, so a client attaches once and sees your GitHub, Jira and Gmail tools side by side.
+
+It lives at `POST /connect/mcp`, and you rarely type that path yourself: `receipt mcp serve` is the stdio bridge that speaks to it, and `receipt tools list`, `receipt tools describe` and `receipt tools call` use the same endpoint when you do not name a connection. See [set up an MCP client](/mcp-gateway/quickstart) for the client side.
 
 <Warning>
 **Tool calls made through this endpoint are not yet recorded as receipts.** `POST /connect/mcp` writes no `tool.called` or `tool.observed` event, so calls made by an attached MCP client — or by `receipt tools call` without `--connection` — leave no trace on [Gateway activity](/mcp-gateway/gateway-activity). Calls through `POST /connect/call`, which is what `receipt connect call`, `receipt tools call --connection` and background runs use, are recorded.
@@ -141,7 +143,7 @@ Every gateway route lives under `/connect/`. "Membership" means you belong to th
 | `/connect/connections/:id/actions` | PATCH | `connect:write` | membership + mutation | Save the allowlist (at most 200 names) |
 | `/connect/connections/:id/repositories` | GET | `connect:read` | membership | GitHub repository policy |
 | `/connect/connections/:id/repositories` | PATCH | `connect:write` | membership + mutation | Save it (at most 1,000 ids) |
-| `/connect/nango/health` | GET | `connect:read` | membership | Integration-service reachability |
+| `/connect/nango/health` | GET | `connect:read` | membership | Integration-provider reachability |
 | `/connect/nango/sessions` | POST | `connect:write` | membership + mutation | Start a connect or reconnect session |
 | `/connect/nango/webhook` | POST | none | HMAC signature | Connection created, overridden, or refresh failed |
 | `/connect/credential/:provider` | POST | `connect:credential` | membership | Materialize a CLI credential bundle |

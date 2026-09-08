@@ -5,6 +5,8 @@ description: "How a background objective becomes a task graph, runs inside a dis
 
 When you give Receipt a goal it cannot answer inside the chat turn, Factory is what runs it. Factory takes the written goal, plans it into a graph of tasks, executes each task inside a disposable computer, integrates the result, and records every step as receipts you can replay afterwards. You reach it from chat, from the Tasks page in the application, and from the in-repo `receipt factory` commands.
 
+Two names recur throughout. A **computer** is a throwaway container Factory rents for one task and releases afterwards; **OpenSandbox** is the controller that hands those containers out, and it is the only one Receipt supports. Inside each container the thing doing the work is the **Codex CLI**, OpenAI's command-line coding agent, run once per task against the files Factory staged for it.
+
 This page is the engine's internals. For what a run looks like from the outside — what you see while it works and how to read the result — start with [background runs](/co-worker/background-runs) and [objectives and tasks](/co-worker/objectives-and-tasks).
 
 <Note>
@@ -76,7 +78,7 @@ A **task monitor** job supervises each running task on a 10-second poll. Its che
 
 ## The computer lane
 
-There is exactly one execution path, `computer`, and exactly one computer target, `opensandbox`. There is no local or host-managed execution lane, and neither value is a per-objective choice.
+There is exactly one execution path, `computer`, and exactly one computer target, `opensandbox` — the sandbox controller that starts, tracks and stops the containers tasks run in. There is no local or host-managed execution lane, and neither value is a per-objective choice.
 
 | Setting | Default | Environment override |
 | --- | --- | --- |
@@ -191,7 +193,11 @@ Memory is receipt-backed like everything else: a scope maps to its own stream, a
 | `factory/objectives/<objectiveId>/candidates/<candidateId>` | Candidate memory |
 | `factory/objectives/<objectiveId>/integration` | Integration memory |
 
-Publishing has a scope of its own, `factory/objectives/<objectiveId>/publish`. Search across a scope is semantic when an embedding function is configured, and keyword-based otherwise.
+Publishing has a scope of its own, `factory/objectives/<objectiveId>/publish`.
+
+<Note>
+**Memory search is keyword matching in this release.** The memory layer can rank entries by embedding similarity, but no call site supplies it with an embedding function — not the runtime, not the in-repo CLI, not the Factory service — so every search a worker or a [runtime memory route](/core/runtime-api#memory) performs matches on the terms in the stored text. `summarize` is a character-capped join of the matched entries, not a model-written summary.
+</Note>
 
 ## Audits after a run
 
