@@ -20,7 +20,7 @@ A single `receipt doctor` run does four things:
 3. **Probes sign-in** — a `GET` to the sign-in endpoint on the auth origin. Any HTTP status at all counts as reachable.
 4. **Reports the saved session** — the signed-in user and workspace, whether the token is expired and when it expires, or `not signed in`. It looks for the session saved for the target it is diagnosing, and falls back to the active session only when that session belongs to the same target — so `doctor --target local` reports your local sign-in even while `prod` is the active one. The token itself is never shown.
 
-Both probes are plain `GET` requests with a ten-second timeout, and neither follows redirects: a host that answers `/health` with a `301` or `302` reads as unhealthy rather than as reachable.
+Every probe is a plain `GET` with a ten-second timeout, and none of them follows redirects: a host that answers `/health` with a `301` or `302` reads as unhealthy rather than as reachable.
 
 ## Flags
 
@@ -119,7 +119,7 @@ When a session is present, `session` carries the details instead:
   "expired": false,
   "sessionFile": "~/.receipt/session.json",
   "userEmail": "you@example.com",
-  "userId": "…",
+  "userId": "<user id>",
   "workspaceId": "ws_…",
   "workspaceName": "Default",
   "expiresAt": "2026-09-07T22:14:05.000Z"

@@ -88,7 +88,7 @@ Whichever way it resolves, the session for the target you set up is promoted to 
 <Step title="The CLI asks for a code">
 It prints `Starting Receipt Connect sign-in at <authUrl>...` and posts a start request to `<authUrl>/api/receipt-connect/cli-login`, with a 15-second timeout.
 
-The server rate-limits this: at most 10 starts per 60 seconds per client IP, and at most 3 requests pending at once. Over either limit it answers HTTP 429 with `{"error":"rate_limited","retryAfter":60}`, and the CLI reports `receipt connect device login failed to start: rate_limited`.
+The server rate-limits this: at most 10 starts per 60 seconds per client IP, and at most 3 sign-ins pending at once. Over either limit it answers HTTP 429 with `{"ok":false,"error":"rate_limited","retryAfter":60}`, and the CLI reports `receipt connect device login failed to start: rate_limited`.
 </Step>
 
 <Step title="You get a code good for ten minutes">
