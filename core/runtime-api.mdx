@@ -1,0 +1,472 @@
+---
+title: "Runtime HTTP and live-event API"
+description: "The Receipt runtime's job, memory, chat, callback and health routes, the web app's own API surface, and the live-event contract — with bodies, statuses and exact error strings."
+---
+
+This is the API you call to start background work, steer or stop a job, read and write agent memory, route an inbound message from a channel, and subscribe to live updates. It follows the routes the runtime registers at start-up, so it describes what the server answers on today rather than what older API notes describe.
+
+Two services are documented here. The **Receipt runtime** owns jobs, memory, channel-neutral chat, health and live events. The **web app** owns the browser-facing `/api/*` routes, including Zero sync and receipt ingestion. The Receipt Connect routes under `/connect/*` are the MCP Gateway's surface and are covered in [the aggregate MCP server](/mcp-gateway/aggregate-server); the runtime's HTML shells and its token-gated diagnostics family are not part of this reference.
+
+## Base URL and the gateway prefix
+
+The runtime listens on port `8787` by default (`PORT` overrides it), so direct calls go to `http://localhost:8787`.
+
+Through the service gateway, the runtime is a private service mounted at the `/runtime` prefix, and the gateway strips that prefix before forwarding. `GET /runtime/healthz` at the gateway becomes `GET /healthz` at the runtime. Prefix every path on this page with `/runtime` when you go through the gateway.
+
+<Warning>
+**The runtime routes on this page have no authentication of their own.** Nothing at the route layer checks a caller's identity on the job, memory, chat or health routes — the control is network placement. The projection callback is the one exception, and only when you set a shared token for it. The service gateway marks the runtime as a private service and answers a `/runtime/*` request with **404** `Not found` unless the request's host is local, or the deployment sets `RECEIPT_SERVICE_GATEWAY_EXPOSURE=private` or `RECEIPT_SERVICE_GATEWAY_ALLOW_PRIVATE=1`. Never expose the runtime port directly.
+</Warning>
+
+<Warning>
+`/connect` is the one runtime prefix the gateway deliberately does **not** strip. `/connect/...` arrives at the runtime with its `/connect/...` path intact, because that is what the runtime's own `/connect` routes expect. Do not add `/runtime` in front of a `/connect` path. Those routes are the public ones, and they do check identity: they require a Receipt Connect JWT.
+</Warning>
+
+Matching is longest-prefix, with `/` (the web app) always last. `/runtime-extra/health` does not match the `/runtime` prefix and falls through to the web app, and `/integrations-connectivity` does not match `/integrations`.
+
+## Conventions
+
+JSON responses are written with `Content-Type: application/json; charset=utf-8` and `Cache-Control: no-store`. Error bodies produced by the plain-text helper are `text/plain`.
+
+The runtime uses two error shapes, and which one you get depends on the route family. Job and memory routes answer with a bare text string. Chat, Connect and diagnostics routes answer with JSON `{ ok: false, error: "<snake_case_code>", detail? }`.
+
+Four responses come from the framework rather than any individual route:
+
+| Condition | Status | Body |
+|---|---|---|
+| Body is not parseable JSON | 400 | `Malformed JSON body` |
+| Body parses but is not a JSON object | 400 | `Request body must be a JSON object` |
+| No route matches the path | 404 | `Not found` |
+| Any other unhandled error | 500 | `Server error` |
+
+The server's idle timeout is 30 seconds.
+
+<Note>
+The runtime does not read or propagate a request id. There is no `x-request-id` middleware, and nothing in a runtime response correlates it to a caller's trace. Request ids exist only in the web app: `/api/chat` mints one per request and carries it in a single wide log event, and `/api/zero/mutate` honours an inbound `x-request-id`. Correlate runtime work by job id and receipt stream instead.
+</Note>
+
+## Enqueue a job
+
+### POST /agents/:id/jobs
+
+Enqueues a job for an agent and returns immediately. Publishes the `jobs` topic.
+
+<ParamField path="id" type="string" required>
+  The agent id the job is addressed to.
+</ParamField>
+
+<ParamField body="payload" type="object">
+  The job payload. Its `kind` decides which handler runs it. If no `payload` key is present, the whole request body is used as the payload, so the route never rejects a body for missing it.
+</ParamField>
+
+<ParamField body="jobId" type="string">
+  An explicit job id. If a job with this id already exists it is returned unchanged rather than re-enqueued — this is the enqueue-idempotency contract.
+</ParamField>
+
+<ParamField body="lane" type="string" default="collect">
+  One of `chat`, `collect`, `steer`, `follow_up`. All four are accepted.
+</ParamField>
+
+<ParamField body="maxAttempts" type="number" default="2">
+  Clamped to the range 1–8.
+</ParamField>
+
+<ParamField body="sessionKey" type="string">
+  Groups jobs for singleton handling.
+</ParamField>
+
+<ParamField body="singletonMode" type="string" default="allow">
+  One of `allow`, `cancel`, `steer`.
+</ParamField>
+
+<ParamField body="singleton" type="object">
+  Object form of the same thing: `{ key?, mode? }`.
+</ParamField>
+
+**202**
+
+<ResponseField name="ok" type="boolean" />
+<ResponseField name="job" type="object">
+  The queue job as it now stands.
+</ResponseField>
+<ResponseField name="async" type="object">
+  <Expandable title="properties">
+    <ResponseField name="jobId" type="string" />
+    <ResponseField name="stream" type="string">
+      `jobs/<id>` — the receipt stream for this job.
+    </ResponseField>
+    <ResponseField name="events" type="object">
+      `{ job: "/jobs/<id>/events", receipt: "/receipt/stream" }`.
+    </ResponseField>
+    <ResponseField name="status" type="string" />
+  </Expandable>
+</ResponseField>
+
+```json
+{
+  "ok": true,
+  "job": { },
+  "async": {
+    "jobId": "…",
+    "stream": "jobs/…",
+    "events": { "job": "/jobs/…/events", "receipt": "/receipt/stream" },
+    "status": "queued"
+  }
+}
+```
+
+<Warning>
+The route never checks that a handler exists for `:id`. An unknown agent id still gets a **202**, and the job sits in the queue forever. A 202 means the job was appended, not that anything will run it — exactly four agent ids have registered handlers: `factory`, `factory-control`, `factory-monitor` and `codex`. See [Jobs, lanes, and durable execution](/core/jobs-and-durable-execution).
+</Warning>
+
+## Control a running job
+
+### POST /jobs/:id/steer
+
+Queues a steer command against a job.
+
+<ParamField body="payload" type="object">
+  The steer payload. If absent, the whole request body is used as the payload.
+</ParamField>
+
+<ParamField body="by" type="string">
+  Who issued the command.
+</ParamField>
+
+**202** `{ ok: true, command }`
+
+**404** `job not found`
+
+**409** `job is <status>; continue through its objective`
+
+### POST /jobs/:id/follow-up
+
+Same request and response shape as steer, including the same 404 and 409 strings.
+
+### POST /jobs/:id/abort
+
+<ParamField body="reason" type="string" default="abort requested">
+  Recorded with the abort command.
+</ParamField>
+
+<ParamField body="by" type="string" />
+
+**202** `{ ok: true, command }`
+
+**404** `job not found`
+
+## Read jobs
+
+### GET /jobs/:id
+
+Returns the job. When the job is `leased` or `running` and its lease has already expired, the read also starts a background reconciliation of that job; the response does not wait for it, and a failure there is only logged.
+
+**200** the queue job
+
+**404** `job not found`
+
+**503** `job temporarily unavailable`
+
+### GET /jobs
+
+<ParamField query="status" type="string">
+  Filter by job status: `queued`, `leased`, `running`, `completed`, `failed`, `canceled`.
+</ParamField>
+
+<ParamField query="limit" type="number" default="50">
+  Clamped to the range 1–500.
+</ParamField>
+
+**200** `{ jobs: QueueJob[] }`
+
+### GET /jobs/:id/wait
+
+<Warning>
+**Deprecated.** This route now answers with `Deprecation: true` and `Link: </jobs/<id>/events>; rel="successor-version"`. Subscribe to `GET /jobs/:id/events` instead of long-polling.
+</Warning>
+
+A long poll that returns when the job reaches a terminal status or the timeout elapses. The route asks the queue for a 200 ms poll interval, but the queue ignores that argument: it waits on queue-snapshot changes and wakes at most 250 ms apart. If the timeout elapses first you still get **200** with the job in its current, non-terminal state.
+
+<ParamField query="timeoutMs" type="number" default="15000">
+  Clamped to the range 0–120000.
+</ParamField>
+
+**200** the job
+
+**404** `job not found`
+
+### GET /jobs/:id/events
+
+A server-sent-event stream on the `jobs` topic, keyed by job id. See [Live events](#live-events).
+
+## Memory
+
+Five routes, all `POST`, all scoped by a `:scope` path parameter.
+
+<Warning>
+Every one of the five memory routes requires an actor context. The route reads `actorContext`, then `authContext`, then the top-level body, and that object must carry both a `userId` and an `organizationId`. A missing actor surfaces as a **500** `Server error`, not a 400, because the check runs outside the route's own error handling.
+</Warning>
+
+<ParamField body="actorContext" type="object" required>
+  `{ userId, organizationId, … }`. May be supplied as `authContext` or as top-level body fields instead.
+</ParamField>
+
+| Route | Additional body | Success |
+|---|---|---|
+| `POST /memory/:scope/read` | `limit?` | **200** `{ entries }` |
+| `POST /memory/:scope/search` | `query`, `limit?` | **200** `{ entries }` |
+| `POST /memory/:scope/summarize` | `query?`, `limit?`, `maxChars?` | **200** `{ summary, entries }` |
+| `POST /memory/:scope/commit` | `text`, `tags?`, `meta?` | **201** `{ entry }` — publishes the `receipt` topic |
+| `POST /memory/:scope/diff` | `fromTs`, `toTs?` | **200** `{ entries }` |
+
+Every route except `commit` appends a `memory.accessed` receipt recording the operation, the strategy, the actor and the result ids; `commit` appends `memory.committed` instead.
+
+Commit answers **400** `text required` without `text`. Diff answers **400** `fromTs required` without `fromTs`.
+
+<Note>
+Search is keyword matching over stored entry text, and `summarize` returns a character-capped join of the matched entries rather than a model-written summary. No embedding dependency is wired into any of the runtime's memory tool call sites.
+</Note>
+
+## Channel-neutral chat
+
+These two routes are what the Slack and Teams adapters call. They are channel-neutral: the channel is a field in the body, not a separate endpoint. Both are served on the private runtime network.
+
+### POST /chat/route
+
+Classification only. It decides how an inbound message should be handled and returns that decision; it starts no objective and calls no provider on the caller's behalf.
+
+<ParamField body="actorContext" type="object" required>
+  May be supplied as `authContext`, or as top-level `userId` / `organizationId`.
+</ParamField>
+
+<ParamField body="latestUserText" type="string" required />
+
+<ParamField body="channel" type="string" default="web">
+  `slack` or `teams`. Any other value is treated as `web`.
+</ParamField>
+
+<ParamField body="priorProviders" type="array" />
+<ParamField body="boundObjectiveId" type="string" />
+<ParamField body="recentContext" type="string" />
+<ParamField body="receiptConnectCapabilities" type="object" />
+
+**200** `{ ok: true, decision }`, where `decision.route` is one of:
+
+- `chat` — answer directly, with optional `contextProviders`.
+- `organization_skill` — draft or save a skill, with `operation: "draft" | "save"`.
+- `factory` — run durable background work, with `requestedProviders` and optional `action`, `objectiveMode` and `probeRouting`.
+
+**400** `{ ok: false, error: "actor_context_required", detail }`
+
+**409** `{ ok: false, error: "openai_byok_unavailable", detail: "The organization must configure OpenAI BYOK before semantic chat routing can run." }` — the organization must have an OpenAI key on file; there is no platform-key fallback on this path. See [Bring your own key](/llm-gateway/bring-your-own-key).
+
+### When routing cannot decide
+
+Routing fails closed, and this is the behaviour most callers get wrong. If the router returns an unusable or incomplete decision, the runtime re-asks once with a verification prompt. If that pass also fails, it raises rather than guessing — it does **not** default to a background run, and it does not manufacture a provider list from prior turns or prompt keywords.
+
+Because the routing call sits outside the route's own error handling, the caller sees the framework's **500** `Server error` and the runtime logs `http.unhandled_error`. The shared user-facing string for the failure is:
+
+> Receipt couldn't determine the access needed for this request. Please retry; no task was started.
+
+The [Slack app](/co-worker/slack) raises that message for any non-`ok` response, a missing `decision`, or a decision it cannot parse. It posts the message in the thread and appends a `slack.thread.routing_failed` receipt itself, with reason `capability_selection_unavailable`. The [Teams app](/co-worker/teams) has not been updated for this and still falls back to a background Factory run. Web chat calls the same router in-process rather than over HTTP, and renders the message inside `Beetle stopped before completing this response.` — Beetle is the name the interface gives the assistant.
+
+### POST /chat/respond
+
+Writes a direct reply for an external channel after `/chat/route` selected `chat`. It is the only runtime endpoint that returns prose to Slack and Teams, and it always uses Beetle's resolved profile prompt.
+
+**200** `{ ok: true, response: { text, profileId } }`
+
+**400** `actor_context_required`, or `latest_user_text_required` when the message text is missing
+
+**409** `openai_byok_unavailable`, with the detail ending "…before Beetle can write a direct chat response."
+
+**502** `{ ok: false, error: "profile_response_unavailable" }` — an empty model answer is an error. The runtime deliberately never substitutes router text or plausible synthetic content for a failed model response.
+
+## Projection callback
+
+### POST /receipt/callback
+
+The runtime's projection and invalidation callback. It is where the Resonate driver's job callbacks land, and where the Postgres receipt store posts each append.
+
+Neither `RECEIPT_RESONATE_CALLBACK_URL` nor `RECEIPT_EVENT_CALLBACK_URL` has a default inside the runtime: with both unset, no callback is dispatched at all. The local supervisor script fills them in, setting both to `http://127.0.0.1:<runtime port>/receipt/callback`, and the deployment templates point them at the runtime service. Either variable satisfies both call sites; they differ only in which one is read first.
+
+<Warning>
+This is an invalidation callback, **not an append API**. It publishes a receipt-append change; it does not write receipts.
+</Warning>
+
+<ParamField header="Authorization" type="string">
+  Optional `Bearer $RECEIPT_CALLBACK_TOKEN`. A mismatch answers **401** `unauthorized`.
+</ParamField>
+
+<ParamField body="stream" type="string" required>
+  The receipt stream the change belongs to.
+</ParamField>
+
+The body must also resolve an event type, either from `eventType` or from `type: "job"` plus a `reason`.
+
+**202** `{ ok: true }`
+
+**400** `stream required`, or `eventType required` when no event type can be resolved
+
+**401** `unauthorized`
+
+## Health and readiness
+
+### GET /healthz
+
+Always answers **200** — it is a liveness surface.
+
+<ResponseField name="ok" type="boolean">
+  Always `true` in this payload.
+</ResponseField>
+<ResponseField name="ready" type="boolean" />
+<ResponseField name="degraded" type="boolean">
+  Always `false` in this payload — a literal the runtime writes, not a computed signal. Do not build alerting on it.
+</ResponseField>
+<ResponseField name="uptimeSec" type="number" />
+<ResponseField name="dataDir" type="string" />
+<ResponseField name="processRole" type="string" />
+<ResponseField name="queue" type="object">
+  A cached queue snapshot: `{ version, total, queued, leased, running, completed, failed, canceled, updatedAt? }`. It is cached because, in the code's words, "Health is a liveness surface, not a replay boundary."
+</ResponseField>
+<ResponseField name="postgres" type="object">
+  `{ ok: true, target }` or `{ ok: false, target?, error }`, where `target` is a redacted description of the connection.
+</ResponseField>
+<ResponseField name="codexBin" type="string" />
+<ResponseField name="resonateUrl" type="string" />
+
+### GET /readyz
+
+Answers **200** when Postgres responds to a `SELECT 1` probe and **503** when it does not.
+
+<ResponseField name="ok" type="boolean" />
+<ResponseField name="ready" type="boolean" />
+<ResponseField name="degraded" type="boolean">
+  Always `false` here too.
+</ResponseField>
+<ResponseField name="uptimeSec" type="number" />
+<ResponseField name="processRole" type="string" />
+<ResponseField name="postgres" type="object" />
+
+Neither payload carries `jobBackend`, `checks`, `workers`, `stalledObjectives`, `oldestQueuedMsByLane`, `lastResumeAt`, `lastResumeError` or `watchdog`. The runtime exposes no `/metrics` endpoint of its own.
+
+## Static assets
+
+### GET /assets/:file
+
+Serves the runtime's built CSS and JS.
+
+<ParamField path="file" type="string" required>
+  A bare file name. A name containing `..` or `/` is rejected.
+</ParamField>
+
+**200** the asset, with `Cache-Control: no-cache` for `.css` and `.js` and `public, max-age=3600` for anything else
+
+**400** `invalid asset path`
+
+**404** `asset not found`
+
+## Live events
+
+### The one thing to get right
+
+Runtime live events are **payload-free invalidation signals**. A refresh event tells you that something under a topic changed; it does not tell you what. The `data` line carries the stream name for the `factory` topic when a stream is given, and otherwise a timestamp. Your client must re-fetch the resource it cares about after receiving an event.
+
+### Server-sent events
+
+Two SSE endpoints exist.
+
+| Endpoint | Subscription |
+|---|---|
+| `GET /receipt/stream` | The global `receipt` topic — every receipt invalidation |
+| `GET /jobs/:id/events` | The `jobs` topic, scoped to that job id |
+
+Both respond with `Content-Type: text/event-stream`, `Cache-Control: no-store` and `Connection: keep-alive`.
+
+On connect, each subscription immediately emits its topic's refresh event with `data: init`, so a client that renders on every event gets a first paint without a special case.
+
+Keepalive frames are sent every **5000 ms**:
+
+```
+event: ping
+data: keepalive
+```
+
+### WebSocket
+
+`GET /factory/live` upgrades to a WebSocket. Frames are JSON:
+
+```json
+{ "kind": "event", "topic": "…", "event": "…", "data": "…", "stream": "…", "id": "…" }
+```
+
+```json
+{ "kind": "ping" }
+```
+
+The subscription set is derived server-side from the request's query parameters rather than sent by the client. When no run or job is selected, job scoping keeps at most 16 related jobs.
+
+<Note>
+The 5000 ms keepalive timer belongs to the SSE path only. A WebSocket connection receives an `init` frame per subscription and then nothing until a real event arrives, so run your own connection health check rather than waiting for a `ping` frame that will not come.
+</Note>
+
+The browser client upgrades `http`/`https` to `ws`/`wss`, reconnects 1000 ms after a close, and re-dispatches each decoded frame as a DOM event named after the frame's `event`. It requires `WebSocket` and throws when there is none:
+
+> `Live transport requires WebSocket support.`
+
+### Topics and refresh events
+
+| Topic | Refresh event |
+|---|---|
+| `agent` | `agent-refresh` |
+| `receipt` | `receipt-refresh` |
+| `jobs` | `job-refresh` |
+| `factory` | `factory-refresh` |
+| `profile-board` | `profile-board-refresh` |
+| `objective-runtime` | `objective-runtime-refresh` |
+
+Every topic except `agent` also has a global key, and each publish fans out to it. That is why `GET /receipt/stream` sees every receipt invalidation rather than one stream's.
+
+### Data events
+
+Refresh events are not the only frames, but they are nearly all of them. Exactly two data events are published by the runtime today, both by the Factory ingress runner:
+
+- `agent-phase` — published on the `agent` topic, keyed by the chat stream. Payload is `JSON.stringify({ runId, phase, summary })`. The server publishes exactly one phase, at the start of a Factory ingress run: `processing`, with the summary `Binding the request to durable objective control.`
+- `factory-stream-reset` — published on the `agent` topic, keyed by the chat stream. Payload is an HTML fragment.
+
+No other data event is published. In particular, no server code publishes `agent-token`, even though some browser clients still register a listener for it.
+
+## The web app API
+
+The web app registers its own routes under `/api/*` on the public origin — no `/runtime` prefix, and a different auth model. These are the application's internal surface, not a versioned public API: treat them as subject to change and prefer the runtime routes above for programmatic work.
+
+| Route | Method | What it does | Auth |
+|---|---|---|---|
+| `/api/auth/$` | GET, POST | Better Auth handler passthrough | Better Auth |
+| `/api/chat` | GET, POST | POST runs the chat orchestrator; GET resumes a chat stream. Both mint a request id and emit one wide event | App session with an active organization — **401** `Unauthorized`, **401** `Organization context is required` |
+| `/api/zero/token` | GET | Issues a Zero access token as `{ token, expiresAt }` | App user — **401** `{ error: "Unauthorized" }`; **503** `{ error: "Zero token configuration failed.", cause }` |
+| `/api/zero/query` | POST | Resolves a named Zero synced query and runs it under the server's session context | Session cookie or the Zero access-token header |
+| `/api/zero/mutate` | POST | Zero push processor | Session cookie — **503** `ZERO_UPSTREAM_DB not configured` when the database is unset |
+| `/api/receipt-trail/events` | GET | SSE proxy to the runtime's `/receipt/stream` | App session with an active organization — **502** `Receipt event stream unavailable` upstream |
+| `/api/receipt-ingest/receipts` | GET, POST | Authenticated receipt append for CLI imports. Allowlisted to the `imports/clauden/` and `imports/claude-code/` stream prefixes, 2 MiB body, 100 receipts per batch | Receipt Connect JWT with `connect:write`; tenant from the token |
+| `/api/receipt-connect/cli-login` | GET, POST | Device-login approval for the CLI: GET renders the approval for a `user_code`, POST completes the flow | App session — **400** `{ ok: false, error: "user_code is required" }` |
+| `/api/sessions/dashboard` | GET | The imported agent-session dashboard | Active session — **401** `{ ok: false, error: "Unauthorized" }` |
+| `/api/sessions/evidence` | POST | Bounded evidence rows for one stream: `{ stream, limit? }` | Same; a schema failure is a **400** |
+| `/api/org/model-policy` | GET, POST | Reads and updates the organization model policy | Organization auth — **401** `Unauthorized` |
+| `/api/files/upload` | POST | Attachment upload | Signed-in, non-anonymous user |
+| `/api/files/markdown` | POST | Markdown rendering for uploaded files | Signed-in, non-anonymous user |
+| `/api/files/object` | GET | Signed object fetch; the `?sig=` parameter is verified | Signature only, no session — **400** `{ error: "Invalid storage key" }`, **403** `{ error: "Invalid file signature" }` |
+| `/api/slack/events` | POST | Proxies the Slack Events API to the Slack service, which owns signature verification, dedup and identity resolution | Slack signature, checked downstream |
+| `/api/slack/install` | GET | Slack install redirect | App session, workspace admin — **401** `Sign in and select a workspace before installing Slack.`, **403** `Only workspace admins can install Slack.` |
+| `/api/slack/oauth/callback` | GET | Redirect to the Slack service callback | — |
+| `/api/admin-metrics` | GET | Admin console metrics | Admin viewer — **401** `{ error: "Sign in to continue." }`, **403** `{ error: "This account does not have access to the admin console." }` |
+| `/api/dev/session-login` | GET | Dev-only session cookie minting; active only in a development build served from a local host | None, and unreachable in a production build |
+
+<Note>
+`/api/zero/query` and `/api/zero/mutate` derive the viewer from the **server** auth context — the Better Auth session cookie, or a Zero access token the web app issued and verifies itself — never from an unverified client-supplied identity. In practice mutations need the session cookie to reach the web app, which means running `zero-cache` with `ZERO_MUTATE_FORWARD_COOKIES=true` so the cookie is forwarded.
+</Note>
+
+## Diagnostics
+
+The runtime also registers a family of internal diagnostics endpoints. They are token-gated — without a debug token or JWT secret configured they answer **503**, and without a bearer token they answer **401** — and several of them mutate live state. They are deliberately not documented here.
+
+Next step: [write an agent against the TypeScript SDK](/core/typescript-sdk).

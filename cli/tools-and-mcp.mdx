@@ -3,9 +3,9 @@ title: "Calling tools and wiring MCP clients"
 description: "Use receipt tools to list, inspect and call gateway tools, and receipt mcp to generate or install a client configuration."
 ---
 
-Receipt exposes every tool your connections publish through one aggregate MCP server at `POST /connect/mcp`. `receipt tools` is the terminal client for it. `receipt mcp` is how you point another client at the same gateway.
+Everything your connections publish is callable from the terminal. `receipt tools` lists the tools your workspace can use, shows what one takes, and runs it. `receipt mcp` points another client — Codex, or anything that speaks MCP over stdio — at the same set, without writing a credential into that client's configuration.
 
-Both are scoped by the workspace bound into your session token, so [switching workspaces](/cli/workspaces) changes which tools appear.
+Both are scoped by the workspace bound into your session token, so [switching workspaces](/cli/workspaces) changes which tools appear. The gateway behind them is the aggregate MCP server at `POST /connect/mcp`; [the aggregate server](/mcp-gateway/aggregate-server) explains what it publishes and why.
 
 ## `receipt tools`
 
@@ -21,7 +21,7 @@ receipt tools call <tool> --json '{"key":"value"}'
 | `describe <tool>` | Lists, then returns the entry whose name matches exactly. Missing name → `receipt tools describe requires a tool name`; no match → `Receipt tool '<name>' was not found` |
 | `call <tool>` | Aggregate: JSON-RPC `tools/call`. With `--connection`: `POST /connect/call` |
 
-Anything else answers `receipt tools supports list, describe, and call`.
+The subcommand defaults to `list`, so a bare `receipt tools` lists. Anything else answers `receipt tools supports list, describe, and call`.
 
 ### Identity
 
@@ -37,6 +37,8 @@ receipt mcp: not signed in; run 'receipt setup' first
 That message says `receipt mcp:` even when you ran `receipt tools`. Sign in with [`receipt setup`](/cli/setup).
 </Note>
 
+The saved session wins here, and the environment is only the fallback. That is the opposite of the `receipt connect list|tools|call` family, where the environment wins outright.
+
 ### Flags
 
 | Flag | Effect |
@@ -49,6 +51,10 @@ That message says `receipt mcp:` even when you ran `receipt tools`. Sign in with
 
 <Warning>
 `--json` on `receipt tools` is the **tool-argument payload**, not an output switch. Output is always JSON, whether or not you pass it. If you type `receipt tools call <tool> --json` expecting pretty output, you are passing arguments to the tool.
+</Warning>
+
+<Warning>
+`--server-url` on `receipt tools` and `receipt mcp` replaces the gateway but keeps sending your saved session token, and nothing checks that the new host is the one you signed in to. The `receipt connect` commands reuse a saved session only when the gateway host matches; this path has no such check. Point `--server-url` only at a host you would hand that token to.
 </Warning>
 
 ### The output envelope
@@ -97,7 +103,15 @@ When a provider-side call fails on an aggregate call, the gateway returns it as 
 `ok: true` reports that the gateway answered, not that the provider did the thing. Read the result body before treating a call as successful.
 </Warning>
 
-Failures at the JSON-RPC level do throw, and you will see them as errors: `Unknown or unavailable tool`, `Invalid params`, `Receipt MCP discovery failed`. HTTP-level failures surface as `unauthorized`, `workspace_membership_required` or `Receipt MCP returned HTTP <n>`.
+Failures at the JSON-RPC level do throw, and you will see them as errors: `Unknown or unavailable tool`, `Invalid params`, `Receipt MCP discovery failed`. HTTP-level failures surface as `unauthorized`, `workspace_membership_required` or `Receipt MCP returned HTTP <n>`. The narrowed `/connect/tools` and `/connect/call` routes have two failures of their own: `Receipt could not authenticate this task. Its runtime access token must be renewed before retrying.` means the token has to be refreshed, and `Receipt could not authorize this task to use the connection. This is a task permission problem; reconnecting the account will not fix it.` means the token lacks the scope — reconnecting the provider will not help.
+
+### Which calls are recorded
+
+`receipt tools call --connection <connection>` goes to `POST /connect/call`, which writes `tool.called` and `tool.observed` receipts and appears on the workspace's [Gateway activity](/mcp-gateway/gateway-activity) dashboard.
+
+<Warning>
+**Aggregate calls are not recorded as tool receipts in this release.** `receipt tools call` without `--connection`, and every call an MCP client makes through `receipt mcp serve`, go to `POST /connect/mcp`, which does not write `tool.called` or `tool.observed`. Those calls do not show up on the Gateway activity dashboard. If you need a recorded trail for a specific call, make it with `--connection`.
+</Warning>
 
 ## `receipt mcp`
 
@@ -109,7 +123,7 @@ receipt mcp remove codex
 receipt mcp serve
 ```
 
-The subcommand defaults to `status`. An unrecognised one answers `receipt mcp supports config, install, status, remove, and serve`. Identity is resolved before any subcommand runs, so `config` and `status` need a saved session; only `serve` accepts the environment fallback.
+The subcommand defaults to `status`. An unrecognised one answers `receipt mcp supports config, install, status, remove, and serve`. Identity is resolved before any subcommand runs, so `config`, `status`, `install` and `remove` need a saved session; only `serve` accepts the environment fallback.
 
 ### `config` — print a client configuration
 
@@ -138,7 +152,7 @@ Any other client name — `receipt mcp config generic`, or `--client generic` �
 
 `remote.url` is informational. **The session token is never written into a generated config**, and a guard checks every config the CLI generates or installs, refusing with `refusing to install an MCP client config containing the Receipt session token` or `refusing to install an MCP client config containing credential material`.
 
-Other flags: `--name <n>` sets the MCP server name (default `receipt`), `--receipt-bin <path>` sets the launcher command, and `--json` prints `{ok, client, config, content, output}`.
+Other flags: `--name <n>` sets the MCP server name (default `receipt`), `--receipt-bin <path>` sets the launcher command, and `--json` prints `{ok, client, config, content, output}`. With `--output` and no `--json`, it prints `receipt mcp config: wrote <path>`.
 
 <Warning>
 `--output` / `--output-file` on `receipt mcp config` **replaces the whole target file**. There is no merge with existing content. Never point it at a client's live configuration file — write it somewhere new and copy the block in by hand.
@@ -160,12 +174,18 @@ For Codex, the CLI shells out to `codex mcp add|get|remove` rather than editing 
 - A duplicate install is refused: `Codex MCP server '<name>' is already installed; remove it first`.
 - `remove` on something not installed reports `{ok: true, removed: false, installed: false}` rather than failing.
 
-`--dry-run` on `install` and `remove` prints the plan and changes nothing.
+`--client-bin <path>` chooses the Codex executable (default `codex`). `--dry-run` on `install` and `remove` prints the plan — including the resolved `configPath`, `command` and `launcher` — and changes nothing.
 
 For every other client the supported path is `receipt mcp config --client generic`; `install`, `status` and `remove` throw.
 
 ### `serve` — the stdio bridge
 
-`receipt mcp serve` is what an installed client launches. It reads one JSON-RPC message per line on stdin, forwards it to `<gateway>/connect/mcp` with your session bearer token, and writes each response as a line on stdout. Each request gets 35 seconds. Failures come back as JSON-RPC errors, and notifications — messages with no id — never receive a response, even on failure.
+`receipt mcp serve` is what an installed client launches. It reads one JSON-RPC message per line on stdin, forwards it to `<gateway>/connect/mcp` with your session bearer token, and writes each response as a line on stdout. It forwards and remembers the `Mcp-Session-Id` header across messages. Each request gets 35 seconds. Failures come back as JSON-RPC errors, and notifications — messages with no id — never receive a response, even on failure.
+
+The gateway speaks MCP protocol versions `2025-11-25` and `2025-06-18`; an unrecognised version negotiates to `2025-11-25`.
+
+<Note>
+The bridge reads your session file only when it starts. After `receipt workspace use <workspace>`, restart the MCP client and let it rediscover tools, or it keeps serving the previous workspace's list.
+</Note>
 
 Next step: [capture Claude Code activity into Receipt](/cli/observe-claude-code).

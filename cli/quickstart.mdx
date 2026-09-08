@@ -1,0 +1,224 @@
+---
+title: "CLI quickstart"
+description: "Go from an empty terminal to your organization's connections in the shell and in Codex, in about five minutes."
+---
+
+Five minutes gets you here: you can see which of your organization's apps are connected, list the tools they publish, call one from the shell, and hand the same set to Codex — without a provider credential ever landing on your machine.
+
+Everything below targets the hosted app. The released binary already knows the hosted origin, so there is nothing to configure before you begin. For a dev or self-hosted origin, add a target or a `--server-url` as described in [Install the CLI](/cli/install).
+
+## Before you start
+
+- **macOS or Linux**, on arm64 or x64. There is no Windows build.
+- **An account on `app.kentron.ai`, signed in in the browser you will approve from**, with an organization selected. The browser step approves the CLI for whichever organization that browser session is in. With no active organization the page answers `Select a workspace first` and sign-in cannot finish.
+- **Codex on your `PATH`**, but only for the last step. `receipt mcp install codex` shells out to `codex mcp add` rather than editing the config file itself, so it needs that binary. Everything before it works without Codex.
+
+<Steps>
+
+<Step title="Install the binary">
+```bash
+curl -fsSL https://raw.githubusercontent.com/kentronai/receipt-cli/main/install.sh | bash
+```
+
+One executable lands in `~/.local/bin`. If that directory is not on your `PATH`, the installer prints the exact line to add for your shell. Then confirm it runs:
+
+```bash
+receipt --version
+```
+
+It prints `receipt` followed by the build version, and only when that flag is the whole command line. Checksums, upgrades, and the one macOS failure worth knowing about — a browser-downloaded tarball is quarantined where a piped install is not — are in [Install the CLI](/cli/install).
+</Step>
+
+<Step title="Check the endpoint before you sign in">
+`receipt doctor` is read-only. It resolves which host you would talk to, probes it, and reports your saved session. It never opens a browser and never prints your token, so it is the safe first move on a machine you have not signed in on.
+
+```bash
+receipt doctor
+```
+
+```
+receipt doctor: ok
+  target:   prod
+  gateway:  https://app.kentron.ai (HTTP 200 at /health)
+  sign-in:  https://app.kentron.ai (HTTP 400)
+  mcp:      https://app.kentron.ai/connect/mcp
+  session:  not signed in
+Next steps:
+  - Run 'receipt setup' to sign in.
+```
+
+`HTTP 400` on the sign-in line is healthy — that endpoint is being asked for a login code it has not been given, and any status at all counts as reachable. When something is genuinely wrong the first line reads `receipt doctor: attention needed`, the command exits 1, and each `Next steps` line names the fix. Add `--json` for the same report as one envelope; that exit code is the right thing for a script to gate on. See [receipt doctor](/cli/doctor).
+</Step>
+
+<Step title="Sign in">
+```bash
+receipt setup
+```
+
+It requests a code, prints it, and opens your browser:
+
+```
+Step 1 of 2: sign in to Receipt
+  Open: https://app.kentron.ai/api/receipt-connect/cli-login?user_code=ABCD-EFGH
+  Code: ABCD-EFGH
+  Approve the CLI from the workspace that should own these connections.
+```
+
+The code is eight characters and lasts ten minutes. Approve it in the browser — the page confirms with `Receipt Connect is approved` — and the terminal prints `Receipt sign-in approved.`, then your account line, the connector catalog and the observer state:
+
+```
+Receipt account: connected to workspace Default (<workspaceId>)
+Receipt Connect connectors:
+  aws: AWS via real 'aws' CLI
+  gcp: Google Cloud via real 'gcloud' CLI
+  ...
+Claude observer: not installed (Unable to find the Claude observer companion binary. Install a Receipt CLI release that bundles receipt-claude-proxy, or pass --proxy-bin <path> / set RECEIPT_CLAUDE_PROXY_BIN.)
+```
+
+Two things to read correctly. That connector list is the whole catalog — all 63 connectable apps — not the ones your organization has connected. And the observer line is not a failure: the current release ships without that companion binary, and sign-in is unaffected. See [Observing Claude Code](/cli/observe-claude-code).
+
+<Warning>
+**Your session token is good for 12 hours.** After that, `workspace`, `tools` and `mcp` fail with `unauthorized`. Run `receipt setup` again — it detects the expired token and re-runs the browser login for you. The token sits in plaintext in `~/.receipt/session.json`, protected only by its `0600` file mode, so do not copy that file between machines, commit it, or attach it to a bug report. [What setup writes to disk](/cli/setup).
+</Warning>
+</Step>
+
+<Step title="Confirm which workspace you are in">
+Sign-in always binds the session to your organization's **Default** workspace. Approving in the browser picks the organization, not the workspace.
+
+```bash
+receipt workspace list
+```
+
+```
+* Default (<workspaceId>) [Default]
+  Engineering (<workspaceId>)
+```
+
+The `*` marks the workspace your token currently carries. To move:
+
+```bash
+receipt workspace use Engineering
+```
+
+That mints a new token, rewrites your session file, and prints the workspace it switched to. Selectors match case-insensitively on id, slug or name; an ambiguous one answers `workspace '<x>' is ambiguous; use its id`.
+
+This is the lever that changes everything below it: connections, tool listings and calls are all scoped by the workspace id inside the token. [Switching workspaces](/cli/workspaces) has the full subcommand list, and [Workspaces in the MCP Gateway](/mcp-gateway/workspaces) explains what a workspace holds.
+</Step>
+
+<Step title="See what is connected">
+```bash
+receipt connect status
+```
+
+On a fresh organization:
+
+```
+receipt connect status: no server-side connections configured
+```
+
+Once connections exist, each is one line of provider, connection name and status:
+
+```
+receipt connect status:
+Current connections:
+  github:default valid
+```
+
+To add one, name the connector by its id:
+
+```bash
+receipt connect github
+```
+
+The browser opens, you authorize the provider, and the CLI polls every two seconds until a connection for it reports `valid`, ending with `receipt connect: github connection 'default' is ready for server jobs.` Picking a multi-word entry out of the interactive numbered menu instead fails with `unsupported Receipt Connect onboarding choice: <Label>`, so pass the id. [Connecting providers from the CLI](/cli/connect) covers the flags and the failure modes, and [Connect an app](/mcp-gateway/connect-an-app) does the same job in the web interface.
+
+<Note>
+Connections created from the CLI always land in the **Default** workspace, whatever workspace your session is using at the time, and always under the name `default`. That is why `receipt connect status` and `receipt tools list` can legitimately disagree.
+</Note>
+</Step>
+
+<Step title="List the tools">
+```bash
+receipt tools list
+```
+
+`tools` always answers in JSON — the gateway's result merged into an envelope that names the workspace that answered:
+
+```json
+{
+  "ok": true,
+  "tools": [
+    { "name": "receipt_<provider>_<connection>_<tool>_<digest>", "description": "..." }
+  ],
+  "workspace": {
+    "kind": "workspace",
+    "id": "<workspaceId>",
+    "name": "Default",
+    "organizationId": "<organizationId>"
+  }
+}
+```
+
+Tool names are opaque aliases. Copy them exactly, never construct one, and re-list after switching workspaces or reconnecting an account. Write tools appear only when the connection's policy enables them — see [Tools and permissions](/mcp-gateway/tools-and-permissions).
+
+An empty list almost always means the workspace in your token holds no valid connection yet; check with `receipt workspace current` and `receipt connect status`. Provider-native MCP connectors are the other explanation: they are left out of the aggregate list and reachable only through `receipt tools list --connection <connection>`.
+
+From here, `receipt tools describe <tool>` returns one entry and `receipt tools call <tool> --json '{"key":"value"}'` runs it. On `call`, `--json` is the **tool-argument payload**, not an output switch. Full surface: [Calling tools and wiring MCP clients](/cli/tools-and-mcp).
+</Step>
+
+<Step title="Hand the same tools to Codex">
+```bash
+receipt mcp install codex
+```
+
+It backs up your Codex config, runs `codex mcp add`, verifies that Codex reports the server afterwards, and prints:
+
+```json
+{
+  "ok": true,
+  "client": "codex",
+  "name": "receipt",
+  "installed": true,
+  "removed": false,
+  "configPath": "~/.codex/config.toml",
+  "backupPath": "~/.codex/config.toml.receipt-backup-<timestamp>",
+  "workspace": {
+    "kind": "workspace",
+    "id": "<workspaceId>",
+    "name": "Default",
+    "organizationId": "<organizationId>"
+  },
+  "remote": { "url": "https://app.kentron.ai/connect/mcp" }
+}
+```
+
+If `codex mcp add` fails, or Codex does not report the server afterwards, the previous config is restored before the error is raised. Set `CODEX_HOME` first if your Codex lives somewhere other than `~/.codex`, and run `receipt mcp remove codex` before reinstalling — a second install onto an existing entry stops with `Codex MCP server 'receipt' is already installed; remove it first`.
+
+The entry Codex gets holds no secret: the CLI refuses to write a client config containing your session token or anything that looks like credential material. What it writes is a launcher for `receipt mcp serve`, which reads the session file itself — **at start only**. Restart Codex after installing, and again after any `receipt workspace use`.
+
+For any other MCP client, generate the configuration and paste it in yourself:
+
+```bash
+receipt mcp config --client generic
+```
+
+`install`, `status` and `remove` support Codex only; anything else answers `receipt mcp install/status/remove currently supports codex; use 'receipt mcp config --client generic' for other clients`.
+</Step>
+
+</Steps>
+
+## Where that leaves you
+
+<Check>
+A signed-in session bound to one workspace, a view of that workspace's connections, the tool list they publish, and a Codex client pointed at the same gateway.
+</Check>
+
+Provider credentials stayed on the server throughout. The only sensitive thing this left on your machine is `~/.receipt/session.json`, which holds a 12-hour bearer token — signing out with `receipt logout` deletes it locally but does not revoke it at the gateway, so treat a leaked copy as live credentials until it expires.
+
+<Note>
+Two parsing quirks catch almost everyone in the first session. `receipt tools --help`, `receipt mcp --help` and `receipt workspace --help` never print help — they run instead — and a bare `receipt` starts interactive onboarding, browser sign-in included, rather than showing usage. Usage comes only from `receipt --help`, `receipt help`, `receipt -h` and `receipt connect --help`, with nothing after them. [The parsing rules](/cli/overview) explain the ordering behind both.
+</Note>
+
+Anything that went wrong along the way is in [CLI troubleshooting](/cli/troubleshooting), which lists the error strings verbatim with a cause and a fix for each.
+
+Next step: [understand what sign-in leaves on your machine](/cli/setup).

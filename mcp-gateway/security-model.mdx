@@ -1,0 +1,151 @@
+---
+title: "Gateway security model"
+description: "Which token can reach which surface, what a stolen CLI session or server environment gives away, and where provider credentials actually live."
+---
+
+The gateway exists so an agent can use your connected apps without ever holding a provider credential. That guarantee is real, and it is narrow. This page says exactly how far it reaches: what each surface's token can do, what an attacker gets from a stolen file, what is encrypted, and what never leaves the server.
+
+<Warning>
+**A Receipt Connect token cannot be revoked before it expires.** Every gateway call is authorized by a bearer token with a fixed lifetime — 12 hours for the CLI. The token carries a unique id, but nothing looks that id up, and the browser session it was minted from is never re-checked. Signing out of the web app, or running `receipt logout`, does not invalidate a token that has already been issued. The only ways to cut one off are to rotate the server signing secret, which invalidates every token at once, to remove the holder from the token's workspace, or to disconnect the provider connection it would call.
+</Warning>
+
+## What actually holds
+
+- **Credentials for apps you connect through the interface stay in Nango**, the integration service behind Receipt Connect. Receipt stores a pointer, not the secret. Two import-only connection kinds are the exception, and they are covered below.
+- **MCP client configs are token-free by construction.** The generated config is checked before it is written, and the check refuses anything containing the session token or credential material.
+- **A sandbox worker never receives the provider keys behind your connected apps.** It gets generated CLI configuration and a Receipt credential helper.
+- **Writes need two independent gates** — the token's scope and the connection's own allowlist. See [Tools and permissions](/mcp-gateway/tools-and-permissions).
+- **A token is bound to one organization and one workspace**, and workspace membership is re-checked on every call.
+
+What that does *not* say is that the server's secrets are unimportant, or that the CLI session file is harmless. Both are covered below.
+
+## The tokens
+
+Every call into the gateway carries a Receipt Connect token: an HS256 JWT with an issuer of `receipt`, an audience of `receipt-connect`, one organization id, one workspace id, a scope list and an expiry. Nothing else authenticates a gateway call, with one exception: `POST /connect/nango/webhook`, which the integration service calls, is verified by an HMAC-SHA256 signature over the raw request body instead.
+
+### Three scopes
+
+| Scope | What it permits |
+|---|---|
+| `connect:read` | List connections, connectors, workspaces and capabilities, and read a connection's current allowlist |
+| `connect:write` | Change gateway state — connect and disconnect apps, edit allowlists and repository selections, create workspaces and set their members — and execute an action classified as a write, when the connection's allowlist also enables it |
+| `connect:credential` | Reach the execution surface at all — the aggregate MCP server, the tool list, the call route, and credential materialization |
+
+`connect:credential` is the important one. All four execution routes require it, so a token without it can inspect the gateway but can never run a tool.
+
+### Which surface carries which token
+
+| Issued to | Scopes | Lifetime | Workspace |
+|---|---|---|---|
+| The web app, per server call | `connect:read`, `connect:write` | 10 minutes; the workspace token it is exchanged for takes the 12-hour default | The organization's `Default` workspace, exchanged for the workspace you are viewing or the hidden Global scope |
+| The CLI, at device login | `connect:credential`, `connect:read`, `connect:write` | 12 hours | The organization's `Default` workspace, always |
+| `receipt workspace use` | The scopes the caller already held | 12 hours | The workspace you switched to |
+| The chat and Slack capability probe | `connect:read` | 12 hours | Global scope |
+| The Teams capability probe | `connect:read` | 12 hours | `Default` workspace |
+| A Factory sandbox task | `connect:read`, plus `connect:credential` and any scopes the task's contract declares | 12 hours | The task's workspace |
+
+The minimum lifetime any token can be issued with is 60 seconds; the default, where a caller names none, is 12 hours.
+
+<Note>
+Web tokens are minted fresh on every server call and never written down, so their lifetime is close to academic: the organization-level one expires in 10 minutes, and the workspace token it is exchanged for carries the 12-hour default. The CLI's 12-hour token is written to disk and reused until it expires — which is why the two are asymmetric.
+</Note>
+
+### Why a browser session cannot run a tool
+
+The web token carries only `connect:read` and `connect:write` — never `connect:credential`. A signed-in browser can therefore connect an app, edit a connection's allowlist, manage workspace members and read activity — each subject to a second check on your workspace role — but it cannot list gateway tools, call one, or materialize a provider credential. Tool execution belongs to CLI, MCP-bridge and sandbox tokens only.
+
+## What a stolen CLI session file can do
+
+`receipt setup` writes `~/.receipt/session.json` with mode `0600`. It holds a live 12-hour bearer token in plaintext, with all three scopes, bound to one workspace.
+
+<Warning>
+**Treat the session file as a credential, not a config file.** Until it expires, whoever holds it can list and call every tool that workspace's policy enables — including writes — and can ask the gateway for the raw provider credential behind any connected app in that workspace. For an OAuth connector that is the credentials object Nango holds, access token included; for AWS it is a credential-process bundle. `receipt logout` deletes the local copy but does not invalidate a token already taken from it.
+</Warning>
+
+Do not copy the file between machines, commit it, or attach it to a bug report. If you believe one has leaked, disconnect the affected connections or remove that account from the token's workspace — those are the workspace-scoped remedies — or ask your operator to rotate the signing secret, which signs everyone out of the gateway at once.
+
+## What a stolen server environment can do
+
+The honest form of the claim is narrow: **an agent's environment, an MCP client config and a sandbox never contain a Receipt Connect provider credential.** The server's own environment is a different matter, and it is not harmless.
+
+| Variable | What its value would let an attacker do |
+|---|---|
+| `RECEIPT_CONNECT_JWT_SECRET`, or `BETTER_AUTH_SECRET` when it is absent | Mint any Receipt Connect token, for any organization, workspace and scope |
+| `RECEIPT_INTEGRATIONS_SECRET_KEY` | Read every connection's credentials directly from Nango, bypassing Receipt entirely |
+| `RECEIPT_CONNECTION_ENCRYPTION_KEY_B64` | Decrypt the stored connection references and the two credential imports below |
+
+These are server-side values. They are never sent to a browser, a CLI, a client config or a sandbox.
+
+## Where credentials actually live
+
+A connection row stores an encrypted payload whose contents depend on its kind. Only two kinds hold a real secret, and both are explicit, user-initiated imports.
+
+| Kind | What is stored | A real credential? |
+|---|---|---|
+| `nango-reference` | The provider plus Nango's integration and connection ids | No — a pointer into Nango |
+| `local-aws-profile` | An AWS profile **name** | No |
+| `aws-credential-process` | An imported AWS credential bundle | **Yes** |
+| `github-token` | An imported GitHub token | **Yes** |
+
+Everything you connect through the interface is a `nango-reference`. Neither importing kind is created from the web interface — both arrive through `POST /connect/credential/github/import` and `POST /connect/credential/aws/import` — and neither ever publishes a tool to the aggregate MCP server, which only ever lists `nango-reference` connections in the `valid` state.
+
+### The encryption
+
+Both the references and the two imports live in the `org_connection_secret` table as `ciphertext`, `iv`, `auth_tag` and `key_version`, encrypted with **AES-256-GCM** using a 12-byte IV and key version 1. The wrapping key comes from deployment configuration (`RECEIPT_CONNECTION_ENCRYPTION_KEY_B64`) and must decode to exactly 32 bytes, so a database-only leak does not yield plaintext.
+
+<Note>
+Organization provider API keys for models are a separate store with a separate key (`BYOK_ENCRYPTION_KEY_B64`), described in [Bring your own key](/llm-gateway/bring-your-own-key). Rotating either wrapping key after material is stored makes that material permanently undecryptable — there is no re-encryption routine. For what the deployment stores and sends beyond the gateway, see [Data handling, telemetry, and security](/guard/data-handling-and-security).
+</Note>
+
+## What the browser is allowed to replicate
+
+The browser replication layer does not mirror the connection table. The publication declares an **explicit column list** for `org_connection_secret` — `id`, `organization_id`, `workspace_id`, `provider`, `name`, `kind`, `status`, `expires_at`, `last_validated_at`, `created_at`, `updated_at`.
+
+Ciphertext, IV, auth tag, key version and internal ownership metadata are therefore never replicated to a client, even though connection `status`, which the interface does need, lives in the same table.
+
+## What never reaches a sandbox or a client config
+
+- The provider credentials Receipt Connect holds: raw provider API keys, OAuth access and refresh tokens, and provider client secrets. A worker receives generated CLI configuration plus a Receipt credential helper instead.
+- The integration service's environment secret key, which the server uses to authenticate Receipt's own calls to that service.
+- The integrations database URL. Startup hands it to the Receipt server process only; it is not written into CLI artifacts, and it is not one of the variables a sandbox worker's environment is built from.
+- A token inside a generated MCP client config. Before writing one, the CLI serializes it and refuses it if it contains the session token — `refusing to install an MCP client config containing the Receipt session token` — or matches a credential-material pattern — `refusing to install an MCP client config containing credential material`. The bridge is a launcher that reads the saved session at run time instead.
+- Ambient AWS instance credentials. Sandbox workers run with `AWS_EC2_METADATA_DISABLED=true`, so EC2 or ECS instance metadata cannot stand in for a Receipt Connect credential.
+
+<Note>
+A credential does materialize inside a sandbox, briefly. The helper the worker runs asks the gateway for the credential at the moment a command needs it, writes the response to a temporary file created under `umask 077`, and deletes that file when the helper exits. None of it is written into the worker's image, its environment or its task packet.
+
+Separately from Receipt Connect, a Factory worker is given the host machine's own GitHub CLI login and Codex profile so that `git` and the agent work inside the sandbox. Those come from the machine running the runtime, not from a connected app.
+</Note>
+
+## The gates on a single call
+
+Four checks run before an action executes, and every one of them runs on each call rather than once per session.
+
+<Steps>
+<Step title="Scope">
+Every execution route requires `connect:credential`. The aggregate MCP server answers a token without it with `401` and `unauthorized`. The tool-list and call routes are more specific: a token that is valid for discovery but missing the execution scope gets `403` with the code `receipt_connect_execution_scope_missing` and the message `Receipt could not authorize this task to use the connection. This is a task permission problem; reconnecting the account will not fix it.` A write additionally requires `connect:write`, and without it the call fails with `integration action '<tool>' requires connect:write`.
+</Step>
+<Step title="Workspace membership">
+The caller must still be a member of the token's workspace. If membership was revoked after the token was issued, the call returns `403` with `workspace_membership_required` — this is the one revocation-like control that works mid-token.
+</Step>
+<Step title="Connection lookup">
+Organization and workspace are part of the same query as the connection selector, so a valid connection id from another organization can never be used as a credential lookup. Tool names published by the aggregate server are opaque aliases: a readable prefix plus a SHA-256 digest over the connection id, provider, connection name and upstream tool name. A call resolves an alias only against the bindings composed from the caller's own organization and workspace, so an alias minted anywhere else matches nothing and comes back as `Unknown or unavailable tool`.
+</Step>
+<Step title="Allowlist">
+The action must be enabled in that connection's policy. Unknown actions and disabled actions return the same message — `integration action not found or disabled` — so a caller cannot probe for hidden tools.
+</Step>
+</Steps>
+
+## What is recorded
+
+Calls through `POST /connect/call` write a `tool.called` receipt and, on success, a `tool.observed` receipt into a per-workspace stream, with tool output truncated to 2,000 characters. Receipts are tamper-evident, SHA-256 hash-chained records verified on replay.
+
+<Warning>
+**Tool calls made over the MCP protocol are not receipted.** The aggregate MCP server does not write `tool.called` or `tool.observed`, so a call from Codex through the bridge, or from `receipt tools call` without a connection, leaves no receipt and does not appear on [Gateway activity](/mcp-gateway/gateway-activity). Only `/connect/call` invocations — `receipt connect call`, `receipt tools call --connection`, and sandbox agent commands — are recorded.
+</Warning>
+
+## Sign-in codes
+
+Neither the short user code the device login prints nor the longer device code behind it is stored in readable form — only HMAC hashes are kept — and the token is never placed in a URL or rendered into the approval page. Starts are rate-limited per client, but that limiter is held in each web server process rather than shared, so a deployment running several replicas enforces it per replica. The flow itself is in [Sign in: setup, login, and logout](/cli/setup).
+
+Next step: [work through the gateway's error messages](/mcp-gateway/troubleshooting).

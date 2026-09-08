@@ -3,7 +3,7 @@ title: "Connecting providers from the CLI"
 description: "Authorize a provider from the terminal with receipt connect, inspect and remove connections, and use the automation surface that reuses your saved session or an environment token."
 ---
 
-`receipt connect <provider>` authorizes a provider in your browser and stores the connection in your organization's **Default** workspace. Every CLI-created connection lands in Default — [`receipt workspace use`](/cli/workspaces) does not move it. That is also why `receipt connect status` and `receipt tools list` can disagree: `receipt tools` reads the workspace bound into your saved session, while `connect` reports Default. To put a connection in another workspace, use the web interface — see [Connected apps](/platform/integrations).
+`receipt connect <provider>` authorizes a provider in your browser and stores the connection in the workspace your CLI session is bound to. Signing in always lands you in your organization's **Default** workspace; after [`receipt workspace use <name>`](/cli/workspaces) your session carries a token for that workspace instead, and every `connect` command — authorizing, `status`, `disconnect` — then reads and writes there. Connections you made in another workspace stop appearing in `receipt connect status` until you switch back. To place a connection from the browser instead, see [Connect an app](/mcp-gateway/connect-an-app).
 
 `receipt connect status`, `disconnect` and `<provider>` reuse the session saved by [`receipt setup`](/cli/setup); being already signed in means no second browser prompt. If the gateway rejects that saved token (HTTP 401) the CLI signs in once more and retries, rather than failing.
 
@@ -75,7 +75,7 @@ If a connection already exists for that provider and name, Receipt creates a **r
 ## Two behaviours worth knowing before you start
 
 <AccordionGroup>
-<Accordion title="The numbered menu breaks for multi-word connector labels">
+<Accordion title="The numbered menu breaks for most connector labels">
 Running bare `receipt connect` prints an interactive menu:
 
 ```
@@ -89,23 +89,25 @@ What do you want to connect?
   1. AWS
   2. Google Cloud
   ...
-  63. Show status only
+  64. Show status only
 Choose [1]:
 ```
 
-Picking a number returns the **display label**, lower-cases it, and looks it up in the alias map. Labels containing spaces or parentheses — Google Cloud, Terraform Cloud, Azure DevOps, Jira OAuth, Zoho CRM, and others — have no matching alias, so the pick fails before any request is sent:
+The menu has 64 entries: one numbered line per connector label — 63 of them — with `Show status only` last.
+
+Picking a number returns the **display label**, lower-cases it, and looks it up in the alias map. Only 25 of the 63 labels happen to match an alias: AWS, Gmail, Notion, LinkedIn, GitHub, HubSpot, Airtable, Apollo, Attio, Zendesk, GitLab, Slack, Linear, Datadog, Sentry, Cloudflare, Vercel, Incident.io, Azure, Anthropic, OpenAI, Zoom, ZoomInfo, Zoho and Outlook. The other 38 — every Google product, both Jira labels, both Confluence labels, Terraform Cloud, Azure DevOps, the nine Zoho product labels, the TikTok labels, Azure Blob Storage and the rest — fail before any request is sent:
 
 ```
 unsupported Receipt Connect onboarding choice: Google Cloud
 ```
 
-Use the connector identifier instead: `receipt connect gcp`, or `--provider gcp`. In a non-TTY the menu picks the default, index 1.
+Use the connector identifier instead: `receipt connect gcp`, or `--provider gcp`. In a non-TTY the menu picks the default, index 1 — AWS.
 </Accordion>
 
 <Accordion title="Every CLI-created connection is named `default`">
 The released CLI sends no connection name, so the server always stores the connection as `default`. There is no `--name` flag on the provider flow.
 
-Named connections such as `aws.prod` exist and are usable — `receipt tools --connection aws:prod`, capability key `aws.prod` — but they are created in the web interface, not from the CLI. See [Connected apps](/platform/integrations).
+Named connections such as `aws.prod` exist and are usable — `receipt tools --connection aws:prod`, capability key `aws.prod` — but they are created in the web interface, not from the CLI. See [Connect an app](/mcp-gateway/connect-an-app).
 </Accordion>
 </AccordionGroup>
 
@@ -115,7 +117,7 @@ Named connections such as `aws.prod` exist and are usable — `receipt tools --c
 receipt connect status
 ```
 
-Prints one line per connection, with whatever account, principal and expiry detail the provider reported:
+Prints one line per connection in the session's workspace, with whatever account, principal and expiry detail the provider reported:
 
 ```
 receipt connect status:
@@ -152,7 +154,7 @@ Deletion needs `connect:write` and workspace mutation authority. If the integrat
 
 ## The agent surface: `list`, `tools`, `call`
 
-`receipt connect list`, `receipt connect tools` and `receipt connect call` are a separate surface intended for automated callers. On the released binary they also use your saved session, so they work straight after `receipt setup`. When `RECEIPT_CONNECT_TOKEN` and `RECEIPT_CONNECT_GATEWAY_URL` are set, those environment variables take **precedence** over the saved session — the way to give a sandbox or CI job an explicit identity.
+`receipt connect list`, `receipt connect tools` and `receipt connect call` are a separate surface intended for automated callers. On the released binary they also use your saved session, so they work straight after `receipt setup`. When `RECEIPT_CONNECT_TOKEN` and `RECEIPT_CONNECT_GATEWAY_URL` are set, those environment variables take **precedence** over the saved session — the way to give a sandbox or CI job an explicit identity. That is also the one case where these commands and `receipt connect status` can disagree about what is connected: an environment token can be bound to a different workspace than your saved session.
 
 Gateway URL comes from `--server-url`, `RECEIPT_CONNECT_GATEWAY_URL` or `RECEIPT_PROXY_SERVER_URL`; the token comes from `RECEIPT_CONNECT_TOKEN`. Signed out with no environment override:
 
@@ -161,7 +163,7 @@ Receipt Connect gateway is unavailable; run 'receipt setup' or set RECEIPT_CONNE
 ```
 
 <Note>
-A saved token is only ever sent to its own gateway host — the origin it was minted for. It is never forwarded to a different `--server-url` or environment gateway.
+On this surface a saved token is only ever sent to its own gateway host — the origin it was minted for. It is never forwarded to a different `--server-url` or environment gateway.
 </Note>
 
 | Command | Output |
@@ -185,6 +187,8 @@ The server enforces most of the rules, not the client, so these come back from t
 - `query '<k>' has an unsupported value`
 - `integration action '<tool>' requires connect:write`
 - `integration action not found or disabled` (404)
+
+Write operations stay off until an owner or admin enables them for that connection; there is no per-action approval prompt in this release. See [Tools and permissions](/mcp-gateway/tools-and-permissions).
 
 Client-side checks fire first, before any request is sent: `receipt connect tools requires a connection id or provider:name`, `receipt connect call requires --path beginning with /`, `receipt connect call is read-only and supports GET only` (any `--method` other than `GET`), `--json must contain valid JSON` and `--json must contain a JSON object`.
 

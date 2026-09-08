@@ -1,0 +1,236 @@
+---
+title: "Authoring an agent"
+description: "Write a receipt-native agent, run it inline from a checkout, and read the control-receipt trail back — starting with the scaffold defect you hit first."
+---
+
+An agent you author here is a receipt-native loop. You declare the receipt types it reads and writes, fold them into a view, expose actions that are runnable against that view, and give it a goal predicate that says when it is done. Every decision the loop makes — which action it selected, what that action emitted, why the run stopped — lands in the same hash-chained stream you can trace, replay and fork afterwards.
+
+The three commands on this page (`new`, `run`, `dev`) belong to the [in-repo developer CLI](/cli/from-source/overview), not the released binary, and you run them from a checkout through the repository's `.receipt/bin/receipt` wrapper.
+
+<Warning>
+**`receipt new` is a template generator, not a working scaffold.** It writes `<repo root>/src/agents/<id>.agent.ts`, and the first line of the file it writes imports `"../sdk/index"`. That path does not exist: the repository has no root `src/` directory, and the SDK lives at `packages/receipt-app/src/sdk/index.ts`. The generated file therefore does not import, and running it fails.
+
+Two locations produce a file that imports, and they are not interchangeable:
+
+1. Rewrite the generated import at `<repo root>/src/agents/<id>.agent.ts` so it points at the package SDK.
+2. Author the agent under `packages/receipt-app/src/agents/` instead. From that directory the template's own relative import `"../sdk/index"` resolves to `packages/receipt-app/src/sdk/index.ts`, and it is also the only location the remote-action loader will find.
+
+Prefer the second when the agent has to reach the remote-action lane — but state the cost plainly. A spec that lives only under `packages/receipt-app/src/agents/` is **not** the file `receipt run` loads through the wrapper. To run an agent inline with `receipt run`, the spec must sit at `<repo root>/src/agents/<id>.agent.ts` with its import rewritten — option 1.
+</Warning>
+
+## Where an agent file can live
+
+There are two loaders, and they read different paths.
+
+| Loader | Path it reads |
+|---|---|
+| The CLI, behind `receipt run` | `<working directory>/src/agents/<id>.agent.ts` |
+| The remote-action worker | `packages/receipt-app/src/agents/<id>.agent.ts` |
+
+The wrapper `.receipt/bin/receipt` changes directory to the repo root before it runs the CLI, so through the wrapper the CLI loader resolves `<repo root>/src/agents/<id>.agent.ts` — the path `receipt new` writes to.
+
+The consequence is a real trade-off, not a preference. An agent left at the repo root is the file `receipt run` loads through the wrapper, but it is **not** deployable to the remote-action lane without being moved into the package. An agent under `packages/receipt-app/src/agents/` is the only kind an action declaring `execution: "remote"` can ever execute, because the remote worker re-loads the spec from that directory by id — and it is **not** the file the wrapper's `receipt run` resolves, so it cannot be run inline from that path.
+
+<Note>
+`receipt run` resolves the agent relative to the process working directory. Nothing in the source documents a wrapper flag that repoints that loader at the package directory, so treat the two paths as two separate facts rather than assuming one command covers both.
+</Note>
+
+## `receipt new` and its templates
+
+```bash
+receipt new <agent-id> [--template basic|assistant-tool|human-loop|merge]
+```
+
+The default template is `basic`. An unrecognised `--template` value silently behaves like `basic`. The command needs write access to `<repo root>/src/agents/`, and on success prints `created <path>` relative to the repo root.
+
+The agent id must be kebab-case — it is matched against `^[a-z][a-z0-9-]*$`. Anything else is refused with:
+
+```
+Invalid agent id '<id>'. Use kebab-case.
+```
+
+An existing file is never overwritten:
+
+```
+Agent file already exists: <absolute path>
+```
+
+What each template declares:
+
+| Template | Receipts it declares | Action it generates |
+|---|---|---|
+| `basic` | `task.requested`, `task.completed` | `action("complete", …)` |
+| `assistant-tool` | `task.requested`, `task.completed` | `assistant("draft", …)`, emitting `Draft: ${prompt}` |
+| `human-loop` | `task.requested`, `approval.received`, `task.completed` | `human("approve", …)`; the generated view also exposes `approval` |
+| `merge` | `task.requested`, `candidate.generated`, `draft.finalized` | falls back to the `basic` action body |
+
+<Warning>
+**The `merge` template does not type-check as generated.** It falls back to the `basic` action body, so the file it writes emits a `task.completed` receipt that its own `receipts` block never declares.
+</Warning>
+
+<Note>
+The CLI's own usage text files `receipt new`, `receipt dev` and `receipt run` under the heading **Legacy agent-framework commands**. They are the authoring surface described here; day-to-day background work goes through Factory objective ingress instead.
+</Note>
+
+## Write the agent
+
+An agent spec is four things: the receipt types it reads and writes, a view folded from those receipts, the actions that are runnable against that view, and a goal predicate that says when the run is done.
+
+- **Declare receipts.** `receipts` is a record of type name to `receipt<T>()`. `receipt<T>()` returns `{ __receipt: true }` — it is a pure type marker that carries the body type into the spec.
+- **Derive a view.** `view` receives `{ on, chain }`. `on(type)` returns `{ all(), last(), exists() }` for receipts of that type; `chain()` returns the raw chain.
+- **Return actions.** `actions` returns an array built from `action`, `assistant`, `tool` or `human`. Each carries a `run` function; `when` and `sideEffects` are both optional. See [the TypeScript SDK and the action contract](/core/typescript-sdk) for the full contract.
+- **Define the goal.** `goal` is a field on the spec, a `({ view }) => boolean` predicate. It is not an SDK import.
+
+```ts
+// packages/receipt-app/src/agents/hello-agent.agent.ts — the remote-action location.
+// To run this inline with `receipt run`, put it at <repo root>/src/agents/hello-agent.agent.ts
+// and repoint the import below at the package SDK.
+import { defineAgent, receipt, action } from "../sdk/index";
+
+export default defineAgent({
+  id: "hello-agent",
+  version: "1.0.0",
+
+  receipts: {
+    "task.requested": receipt<{ prompt: string }>(),
+    "task.completed": receipt<{ output: string }>(),
+  },
+
+  view: ({ on }) => ({
+    prompt: on("task.requested").last()?.prompt,
+    done: on("task.completed").exists(),
+  }),
+
+  actions: () => [
+    action("complete", {
+      when: ({ view }) => Boolean(view.prompt) && !view.done,
+      sideEffects: "receipt_only",
+      run: async ({ view, emit }) => {
+        await emit("task.completed", { output: `Echo: ${view.prompt ?? ""}` });
+      },
+    }),
+  ],
+
+  goal: ({ view }) => Boolean(view.done),
+});
+```
+
+## Run it
+
+This section applies to a spec at `<repo root>/src/agents/<agent-id>.agent.ts` — option 1 in the warning above. A spec that lives only under `packages/receipt-app/src/agents/` is not resolvable by `receipt run` through the wrapper, so the commands below will not load it.
+
+```bash
+receipt run <agent-id> --problem <text> [--prompt <text>] [--run-id <id>] [--stream <stream>] [--run-stream <stream>]
+```
+
+`--problem` is required — `--prompt` is an alias for it — and omitting both throws `--problem is required`.
+
+The command loads the agent module and checks its default export looks like a `defineAgent` spec: an object with a string `id`, a string `version`, function `view`, `actions` and `goal`, and a truthy object `receipts`. Anything else is refused with:
+
+```
+Agent '<id>' is not a receipt-native defineAgent spec. The legacy queued agent.run loop was removed; use Factory objective ingress or defineAgent.
+```
+
+**What it seeds, and in what order.** The run is seeded with a `task.requested` receipt if the spec declares that type; otherwise with `prompt.received` if the spec declares that; otherwise with nothing at all. The seed uses the deterministic event id `seed:<runId>`.
+
+**Identifier defaults.**
+
+| Flag | Default |
+|---|---|
+| `--run-id` | `run_<base36 now>_<4 random base36 characters>` |
+| `--stream` | `agents/<agentId>` |
+| `--run-stream` | `<stream>/runs/<runId>` |
+
+The loop runs **inline**, with a Resonate-backed adapter for remote actions. It prints pretty JSON:
+
+```json
+{ "ok": true, "status": "completed", "mode": "inline",
+  "runId": "…", "stream": "…", "runStream": "…" }
+```
+
+`ok` is `status === "completed"`, and `reason` appears only when `status` is `blocked`. Any status other than `completed` sets the process exit code to **2**.
+
+Prerequisites: a `defineAgent` spec at `<repo root>/src/agents/<id>.agent.ts` and Postgres. The command always builds a Resonate client for the remote-action lane, so an action declaring `execution: "remote"` also needs a reachable Resonate server and a `worker-chat` role to serve it.
+
+<Note>
+The usage text advertises `--max-iterations <n>` and `--workspace <path>` for this command. The handler reads neither.
+</Note>
+
+<Note>
+One inconsistency worth flagging rather than asserting: `receipt run` and `receipt fork` construct their Postgres stores with no data-directory argument, so they operate on the default schema, while stream resolution, chain reads and the queue helpers pass `DATA_DIR`. In the default single-tenant repo layout the two resolve to the same schema only when `RECEIPT_POSTGRES_SCHEMA` is set. Check this first if `receipt trace` cannot resolve a run you just executed.
+</Note>
+
+## Read the run back
+
+Three commands read a chain. All of them need Postgres (`ZERO_UPSTREAM_DB`).
+
+| Command | Output |
+|---|---|
+| `receipt trace <target> [--json] [--output-file <path>]` | One line per receipt: index padded to four characters, ISO timestamp, event type. With `--json`: `{ stream, receipts: [{ index, ts, isoTs, type }] }`. A receipt with no type reads `unknown`. |
+| `receipt replay <target> [--output-file <path>]` | Always JSON, whether or not you pass `--json`: `{ stream, receipts: [ <full receipt body>, … ] }`. |
+| `receipt inspect <target> [--output-file <path>]` | Always JSON: `{ stream, count, head }`. `head` is the **last** entry in the chain — the newest receipt, not the oldest. |
+
+**How a target resolves.** A value containing `/` is used as a stream name verbatim. Otherwise the store is searched for an exact stream name, then for any stream ending in `/runs/<value>`. Failure is:
+
+```
+Unable to resolve run/stream '<value>'
+```
+
+## Interpreting the control-receipt trail
+
+The runtime records its own decisions as receipts alongside yours. The canonical set is:
+
+```
+run.started, run.completed, run.blocked, run.failed
+action.selected, action.started, action.output.manifest,
+action.completed, action.failed, action.superseded
+human.requested, human.responded
+goal.completed
+merge.started, merge.output.manifest, merge.selected,
+merge.applied, merge.skipped, merge.failed
+```
+
+Read against that list, a trace answers why a run stopped where it did.
+
+| What the trail shows | What it means |
+|---|---|
+| `action.selected` → `action.started` → `action.output.manifest` → `action.completed` | A normal action pass. The manifest binds the buffered output before any of it is appended: it carries an `outputCount` and a content hash of the emitted receipts, not their bodies. Each buffered receipt is then appended under an event id derived from `invocationId`, so a lease takeover cannot splice a different result onto a committed prefix — which is what makes a `sideEffects: "query"` action safe to repeat. |
+| `action.superseded` | The action's `commitWhen` fence returned false inside a CAS retry, evaluated against both the selected view and the latest view. The receipt's reason reads `commit predicate rejected the current receipt-derived view`, and the loop reselects from the new head instead of committing. |
+| `human.requested` with no matching `human.responded` | A `human` action is waiting. The run appends `run.blocked` with the reason `waiting for a correlated response to human action '<id>'` and stops there; it only continues once a correlated domain receipt makes the action's `responseWhen` predicate true. |
+| `run.blocked` | The run stopped without reaching its goal. A `blocked` status is what makes `receipt run` print a `reason`, and any status other than `completed` exits 2. |
+| `run.failed` | The loop hit an uncaught error. It appends `run.failed` and rethrows, unless a terminal `run.completed` already exists. |
+| `run.completed` with the note `goal satisfied` | The goal predicate returned true. `goal.completed` is a declared control-receipt type that this loop never appends, so do not wait for one. |
+| No further `action.selected` | Selection found nothing runnable; the scheduler's reason for that selection is `settled`. |
+
+Selection itself is deterministic. Every runnable action is sorted by kind priority — `human`, then `assistant`, then `action`, then `tool`. If any of them is `exclusive`, the first one in that order is selected alone and the reason is `exclusive`. Otherwise the ordered list is sliced to a hard cap: the smallest `maxConcurrency` declared by any runnable action, taken together with the spec default (8 when the spec sets no `maxConcurrency`) and floored at 1. The reason is `concurrency-cap` when that cap is smaller than the number of runnable actions, and `priority-order` when it is not.
+
+Both identifiers in the trail are content hashes, so a replay reproduces them:
+
+```
+selectionId  = "agent_selection_"         + sha256([runId, spec.id, spec.version, policyVersion,
+                                                    schedulerPolicyVersion, selectedHead ?? "root",
+                                                    actionIds])[0:32]
+invocationId = "agent_action_invocation_" + sha256([selectionId, actionId, index])[0:32]
+```
+
+The control policy version is `runtime-policy-v2` unless the spec sets its own `runtimePolicyVersion`; the scheduler policy version is always `scheduler-v2`.
+
+## What `receipt dev` starts
+
+```bash
+receipt dev
+```
+
+It takes no flags and no arguments. It spawns `scripts/start-resonate-dev.mjs` from the repo root, which brings up the whole runtime role fan-out — `worker-control` ×1, `worker-chat` ×2, `worker-codex`, `driver` ×1 and `api` ×1 — plus a local Resonate server, unless `RESONATE_START_SERVER=0` or `RESONATE_URL` points somewhere that is not loopback. The supervisor requires a Resonate CLI of at least 0.9.7 to start that server.
+
+The dev script sets `RECEIPT_SERVER_WATCH=api`, so the `api` role runs under `bun --watch` and the other roles do not.
+
+This is what actually executes remote actions: `worker-chat` is the role that registers the remote-agent-action function, so an action declaring `execution: "remote"` needs that role running.
+
+Exit code 0 resolves. Anything else rejects with:
+
+```
+receipt dev exited with code <code|null>
+```
+
+Next step: [set the variables the runtime reads](/core/configuration).

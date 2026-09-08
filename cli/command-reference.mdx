@@ -1,0 +1,249 @@
+---
+title: "Command reference"
+description: "Every verb the released receipt binary accepts, with its flags, defaults, output shape and exit code."
+---
+
+One binary covers the whole job: sign in, pick a workspace, authorize a provider, list and call the tools your connections publish, and hand the same set to Codex or another MCP client. This page is the flat list. Each group gives the syntax, the flags with their defaults, what the command prints, and what it exits with; the task-shaped pages linked from each section explain when you would reach for it.
+
+Everything here is the released `receipt` binary. The in-repo developer CLI is a different program with different verbs — see [The developer CLI](/cli/from-source/overview).
+
+## Conventions that apply everywhere
+
+| Convention | Behaviour |
+|---|---|
+| Exit codes | `0` on success, `1` on any failure. Nothing else comes from the CLI itself. |
+| Streams | Results and progress lines go to stdout; only the final error message goes to stderr. |
+| `connect` prefix | Optional on the connect commands: `receipt status` and `receipt connect status` are the same command, and so are `receipt setup` and `receipt connect setup`. |
+| `--json` | Means three different things. Output switch for `doctor`, `setup`, `login`, `workspace`, `connect list` and `mcp config`; the **tool-argument payload** for `tools call` and `connect call`; ignored by `import` and `observe`, which always emit JSON. |
+| The token | Never printed by any command. `doctor` shows the expiry, not the JWT. |
+| Boolean flags | Three different argument parsers are in play, and the one used by `setup`, `login`, `doctor`, `connect`, `import` and `observe` lets a bare boolean swallow the next word. Put boolean flags last, or write `--open=false`. See [the parsing rules](/cli/overview). |
+
+<Note>
+Scripts should parse the `--json` forms rather than the text output. `setup --json` and `login --json` also suppress the `Step 1 of 2` progress lines; `connect status` and `connect <provider>` still print them when a fresh sign-in happens first.
+</Note>
+
+## Entry points and help
+
+```bash
+receipt                     # interactive onboarding — starts a browser sign-in
+receipt --help              # also: receipt help, receipt -h, receipt connect help
+receipt --version           # also: receipt -V
+```
+
+| Command | Output | Exit |
+|---|---|---|
+| `receipt` | Onboarding banner, your connections, then the menu `What do you want to connect?` | `0` when the flow completes |
+| `receipt --help` | The usage text, including one `receipt connect <id>` line per connector | `0` |
+| `receipt --version` | `receipt v0.1.0-preview.7` | `0` |
+
+<Warning>
+**Bare `receipt` is not a help screen — it signs you in.** With no arguments it resolves the hosted endpoint and opens a browser device login, then prompts for a provider. On a non-interactive shell the menu silently picks the first entry, `AWS`. `receipt --help extra` does the same thing, because the parser reads `extra` as the value of `--help`.
+</Warning>
+
+`--version` and `-V` are recognised only as the **sole** argument. `receipt tools --help`, `receipt mcp --help` and `receipt workspace --help` never print help either: those words are claimed by their own handlers first. Signed out they fail with `receipt mcp: not signed in; run 'receipt setup' first` (that same `receipt mcp:` prefix appears for `tools`) or `receipt workspace: not signed in; run 'receipt setup' first`. Signed in, `mcp --help` runs `mcp status codex`, `tools --help` runs `tools list`, and `workspace --help` fails with `receipt workspace supports list, current, create, rename, use, and delete`.
+
+## Session: setup, login, logout, doctor
+
+```bash
+receipt setup [--target prod|dev|local|<url>] [--json]
+receipt login [prod|dev|local|<url>] [--fresh-login]
+receipt logout
+receipt doctor [--target prod|dev|local|<url>] [--json]
+```
+
+| Flag | Applies to | Default | Effect |
+|---|---|---|---|
+| `--target <t>` | all four | `prod` | Endpoint to use. An `http(s)` value produces a `custom` target; any other word fails with `receipt connect target must be prod, dev, local, or an http(s) URL`, even when `--server-url` is also given. |
+| `--server-url <url>` | `setup`, `login`, `doctor` | — | Gateway override; always produces a `custom` session. |
+| `--auth-url <url>` | `setup`, `login`, `doctor` | — | Web origin that serves the sign-in page, when it differs from the gateway. |
+| `--fresh-login` | `setup`, `login` | off | Ignore the saved session and run the device login again. |
+| `--no-login` | `setup`, `login` | off | Skip sign-in. Aliases `--skip-login`, `--local-only`. |
+| `--no-claude` | `setup` | off | Skip the Claude observer install. Aliases `--no-observer`, `--no-background`, `--skip-claude`. |
+| `--no-open` | `setup`, `login` | off | Print the sign-in URL instead of opening a browser. `--open=false` and `RECEIPT_CONNECT_OPEN_BROWSER=0` do the same. |
+| `--json` | all four | off | Structured envelope instead of the status lines. |
+
+`login` takes an optional **positional** target, so `receipt login local` and `receipt login --target local` are the same. `doctor` does not: a positional there is ignored, and only `--target` counts. `logout` reads no flags at all — it always acts on whichever session is active.
+
+| Command | Text output | JSON envelope |
+|---|---|---|
+| `setup` | `Receipt account: …`, the full connector catalog, `Claude observer: …` | `ok`, `receiptAccount`, `connectors`, `claudeObserver` |
+| `login` | `receipt login: signed in …`, `receipt login: gateway …`, `receipt login: saved …` | `ok`, `reused`, `target`, `gatewayUrl`, `userId`, `userEmail`, `organizationId`, `workspaceId`, `workspaceName`, `sessionFile`, `targetSessionFile` |
+| `logout` | `receipt logout: signed out <email> from <gateway>`, or `receipt logout: not signed in` | — |
+| `doctor` | `receipt doctor: ok` or `receipt doctor: attention needed`, then target, gateway, sign-in, mcp and session lines, then `Next steps:` | `ok`, `target`, `gatewayUrl`, `authUrl`, `mcpUrl`, `session`, `gateway`, `auth`, `nextSteps` |
+
+`logout` with nothing to remove still exits `0`, and so does `login --no-login`, which prints `receipt login: skipped (disabled by setup flag)`. `doctor` exits `1` when its `ok` is false or the endpoint cannot be resolved. Full behaviour: [Sign in](/cli/setup) and [Diagnosing your setup](/cli/doctor).
+
+## Workspaces
+
+```bash
+receipt workspace current [--json]        # also: identity
+receipt workspace list [--json]
+receipt workspace create <name> [--json]
+receipt workspace rename [<workspace>] <name> [--json]
+receipt workspace use <workspace> [--json]
+receipt workspace delete <workspace> [--json]
+```
+
+`current` is the default subcommand. Every one of these requires a saved session — there is no environment fallback — and each `<workspace>` selector matches case-insensitively on id, slug or name.
+
+| Flag | Default | Effect |
+|---|---|---|
+| `--json` | off | Envelope instead of text. Recognised only as the bare, exact word. |
+| `--target <name>` | active session | Which saved session to use. Space form only — `--target=dev` is ignored. |
+
+<Warning>
+**This group uses its own flag parser and accepts nothing else.** Any other `--flag` is skipped silently *and the word after it becomes a positional*, so `receipt workspace create --server-url X My Team` creates a workspace named `X My Team`.
+</Warning>
+
+| Subcommand | Text output | JSON |
+|---|---|---|
+| `current`, `identity` | `<name> (<id>)`, with ` [Default]` when it is the default workspace | `ok`, `workspace` |
+| `list` | one row per workspace, `*` marking the current one | `ok`, `currentWorkspaceId`, `workspaces` |
+| `create`, `rename` | `<name> (<id>)` | `ok`, `workspace` |
+| `use` | `<name> (<id>)` | `ok`, `workspace`, plus `sessionFile` and `targetSessionFile` |
+| `delete` | `Deleted workspace <id>` | `ok`, `deleted`, `workspaceId` |
+
+`use` is the only command that replaces the session's token. Anything else in the list is `receipt workspace supports list, current, create, rename, use, and delete`. See [Switching workspaces](/cli/workspaces).
+
+## Tools
+
+```bash
+receipt tools list [<connection>]
+receipt tools describe <tool> [--connection <provider:name>]
+receipt tools call <tool> [--connection <provider:name>] --json '{"key":"value"}'
+```
+
+| Flag | Default | Effect |
+|---|---|---|
+| `--connection <id \| provider:name>` | — | Narrow to one connection instead of the aggregate MCP server. |
+| `--json '<object>'` | `{}` | The **arguments** for `call`. Invalid input fails with `--json must be a JSON object`. |
+| `--target <name>` | active session | Which saved session to use. |
+| `--server-url <url>` | session gateway | Replaces the gateway only; the saved token is still sent. |
+| `--output <path>`, `--output-file <path>` | — | Write the envelope atomically at mode `0600` and print `{"ok":true,"outputFile":…,"bytes":…}`. |
+
+Output is always JSON: `ok`, the result fields, and a `workspace` object naming the workspace the session is bound to. A provider-side failure on an aggregate call comes back as a normal MCP result carrying `isError`, so `ok: true` means the gateway answered, not that the provider succeeded. Anything other than the three subcommands fails with `receipt tools supports list, describe, and call`.
+
+<Warning>
+**`--server-url` on this group has no same-host check.** Pointing it at another host presents your saved bearer token to that host. The `receipt connect list|tools|call` group does check, and refuses; this one does not.
+</Warning>
+
+Identity here resolves the saved session **first**, and falls back to `RECEIPT_CONNECT_TOKEN` with a gateway and organization id from the environment. That is the opposite order from the automation surface below. See [Calling tools and wiring MCP clients](/cli/tools-and-mcp).
+
+## MCP clients
+
+```bash
+receipt mcp config [codex|generic] [--output <path>] [--json]
+receipt mcp install codex [--dry-run]
+receipt mcp status codex
+receipt mcp remove codex
+receipt mcp serve
+```
+
+| Flag | Default | Effect |
+|---|---|---|
+| `--client <name>` | `codex` | Client to generate for. Also accepted as the second positional. |
+| `--name <name>` | `receipt` | Server name written into the client config. |
+| `--output <path>`, `--output-file <path>` | — | Write the config atomically at mode `0600` and print `receipt mcp config: wrote <path>`. Whole-file replace, no merge. |
+| `--dry-run` | off | `install` only. Prints what it would do and changes nothing. |
+| `--client-bin <path>` | `codex` | The client executable to drive. |
+| `--client-config <path>` | Codex's own path | Any other value is refused. |
+| `--receipt-bin <path>` | the running binary | The command written into the launcher. |
+| `--json` | off | Envelope for `config`. |
+
+`status` is the default subcommand and `codex` the default client. Identity is resolved before the subcommand runs, so `config`, `status`, `install` and `remove` all need a saved session; only `serve` accepts an environment token. `install`, `status` and `remove` support Codex only — anything else gets `receipt mcp install/status/remove currently supports codex; use 'receipt mcp config --client generic' for other clients`.
+
+Every generated config is checked before it is written: it is refused with `refusing to install an MCP client config containing the Receipt session token` or `refusing to install an MCP client config containing credential material` rather than emitting a credential. `install` backs up the existing Codex config first and restores it if the client command fails. Unknown subcommands give `receipt mcp supports config, install, status, remove, and serve`.
+
+`serve` is the stdio bridge: one JSON-RPC message per stdin line, forwarded to the gateway's aggregate MCP endpoint with the session token, one response per line. It reads the session once at start, so restart the client after `receipt workspace use`.
+
+## Connections
+
+```bash
+receipt connect                              # interactive onboarding
+receipt connect <connector-id> [<target>]
+receipt connect status [<target>]
+receipt connect disconnect [--provider aws] [--name default]   # also: remove, revoke
+```
+
+| Flag | Applies to | Default | Effect |
+|---|---|---|---|
+| `--provider <id>` | onboarding, `disconnect` | `aws` for `disconnect` | Connector to act on, skipping the menu. |
+| `--name <name>` | `disconnect` | `default` | Connection name to remove. |
+| `--email <address>` | `<connector-id>` | — | Sent to the provider authorization step as the end-user email. |
+| `--yes`, `--auto-open` | `<connector-id>` | off | Skip the `Press Enter to open …` pause. |
+| `--no-wait` | `<connector-id>` | off | Return as soon as the link is open. `--wait=false` does not work. |
+| `--timeout-ms <n>` | `<connector-id>` | `600000` | Polling budget while waiting for the connection to become valid. A non-numeric value silently reverts to the default. |
+| `--no-open` | onboarding, `<connector-id>` | off | Print the authorization link instead of opening it. |
+| `--fresh-login` | all | off | Sign in again before running the command. |
+
+These commands reuse the session saved by `setup`, and if the gateway rejects that token they print `Saved Receipt session was rejected by the gateway; signing in again.`, sign in once and retry. They never read `RECEIPT_CONNECT_TOKEN`.
+
+Endings you will see: `receipt connect: <provider> connection '<name>' is ready for server jobs.`, `Timed out waiting for <provider> connection.`, `receipt connect status: no server-side connections configured`, `receipt connect disconnect: removed <provider>:<name>` or `… no <provider>:<name> connection found`. Bare `disconnect` targets `aws:default`, so pass `--provider` unless that is what you meant.
+
+<Note>
+Pick a connector by id (`receipt connect gcp`) rather than by number in the menu. A numbered pick returns the display label, and only labels that also happen to be a connector alias resolve; the rest fail with `unsupported Receipt Connect onboarding choice: <Label>`. `receipt connect relay` is gone entirely and always fails.
+</Note>
+
+Full behaviour: [Connecting providers from the CLI](/cli/connect).
+
+## Automation surface
+
+```bash
+receipt connect list [--json]
+receipt connect tools <connection>
+receipt connect call <connection> <tool> [--json '{"key":"value"}']
+receipt connect call <connection> --path /resource [--query-json '{"k":"v"}'] [--headers-json '{"k":"v"}'] [--method GET]
+```
+
+This is the group a script or a sandboxed job uses. Identity precedence is **reversed** here: an environment token wins outright, and the saved session is read only when `RECEIPT_CONNECT_TOKEN` is unset — and then only if the gateway is the same host the session belongs to. Setting the token without a gateway variable fails with `Receipt Connect gateway is unavailable; run 'receipt setup' or set RECEIPT_CONNECT_TOKEN` even when a session exists.
+
+| Flag | Default | Effect |
+|---|---|---|
+| `--json` | — | A **boolean** for `list`; the arguments payload for `call <tool>`. |
+| `--path /<resource>` | — | Read a provider resource directly. Must begin with `/`. |
+| `--query-json`, `--headers-json` | — | Query and headers for a `--path` read. Each must be a JSON object. |
+| `--method <verb>` | `GET` | `GET` is the only accepted value. |
+| `--server-url <url>` | env, then session | Gateway to call. |
+| `--target <name>` | active session | Which saved session to consider. |
+
+`list` prints `Current connections:` with one `<provider>:<name> <status>` line each, or `Current connections: none`; `--json` gives `ok` and `connections`. `tools` and `call` print the gateway's JSON verbatim. Validation happens before any request: `receipt connect tools requires a connection id or provider:name`, `receipt connect call requires --path beginning with /`, `receipt connect call is read-only and supports GET only`, `--json must contain valid JSON`, `--json must contain a JSON object`. There is no sign-in retry on this path.
+
+## Import and observe
+
+```bash
+receipt import clauden|claude-code [<path>] [--mode metadata|full]
+receipt observe clauden|claude-code [--event-log ~/.claudeN/events.ndjson] [--launch]
+receipt observe clauden install|start|stop|status|uninstall
+```
+
+The source word is required and must be exactly `clauden` or `claude-code`; anything else fails with `import source is required. Supported sources: clauden, claude-code` (or `observe source is required. …` for `observe`). `observe` is `import` with following forced on. Service actions are `clauden` only — `observe claude-code supports live file tailing only; use observe clauden install for proxy service install`.
+
+| Flag | Default | Effect |
+|---|---|---|
+| `<path>`, `--event-log`, `--path` | per source | File to read. |
+| `--mode metadata\|full` | `metadata` | Anything else fails with `--mode must be metadata or full`. |
+| `--stream <name>` | `imports/<source>/<project>/<sourceId>` | Receipt stream to write to. Uploads are rejected outside `imports/clauden/` and `imports/claude-code/`. |
+| `--project`, `--source-id` | derived | Stream segments, sanitised and capped at 80 characters. |
+| `--max-lines <n>` | unlimited | Stop after n lines. |
+| `--follow` | off (`observe` forces on) | Keep tailing the file. |
+| `--poll-ms <n>` | `1000` | Tail interval, floored at 100. |
+| `--launch` | off | Spawn the companion binary. Requires `--follow`. |
+| `--batch-size <n>` | `50` | Receipts per upload, capped at 100. |
+| `--local-only` | off | Never upload. Aliases `--no-cloud`, `--no-upload`. |
+| `--target <name>` | active session | Which saved session to upload with. |
+| `--no-start` | off | `install` only: write the service file without starting it. |
+| `--output-file <path>` | — | Write the JSON result to a file. Not atomic, and not `0600`. |
+
+Both always emit JSON and ignore `--json` as a switch: `ok`, `source`, `importId`, `stream`, `sourcePath`, `mode`, `follow`, `storage`, an optional `cloud` object, and `counts`. Service actions return `ok`, `action`, `platform`, `label`, `serviceFile`, `dataDir`, `eventLog`, `mode` and, when the service was started, `active`.
+
+<Warning>
+**Whenever a session exists, these commands upload by default**, and `--mode metadata` redacts only the raw captured payload — the normalized receipts still carry prompt and response text. Read [Observing and importing Claude Code activity](/cli/observe-claude-code) before running either against real work.
+</Warning>
+
+## Exit codes in practice
+
+`0` and `1` are the whole vocabulary. A device-login failure, a rate limit, a rejected token, a validation error and a failing `doctor` all exit `1` with the message on stderr. Commands that do nothing still succeed: `receipt logout` with no session, `receipt login --no-login`, and `receipt mcp remove codex` when the entry was already absent.
+
+A code you did not expect did not come from the CLI. On macOS an exit of `137` on any command means the operating system killed the binary before it ran — reinstall it with the installer rather than by unpacking an archive by hand. Exit codes and the environment variables that steer all of the above are collected in [Environment and exit codes](/cli/environment-and-exit-codes); the message-by-message fixes are in [CLI troubleshooting](/cli/troubleshooting).
+
+Next step: [look up an environment variable or an exit code](/cli/environment-and-exit-codes).

@@ -4,54 +4,48 @@ The source for the Kentron documentation site at **[docs.kentron.ai](https://doc
 [Mintlify](https://mintlify.com) site: every page is an MDX file in this repository, and the whole
 navigation is declared in [`docs.json`](docs.json).
 
-The site documents **Receipt**, the AI chat platform that runs on the Kentron platform — for the people
-who use it, the developers who build on it, and the operators who self-host it.
-
-## What is in here
-
-48 pages across six tabs. Each tab is a directory, and the file layout mirrors the URL: `guides/getting-help.mdx`
-is served at `/guides/getting-help`.
+The site documents the Kentron platform in seven product sections, one per navigation tab. Each tab is a
+directory and the file layout mirrors the URL: `mcp-gateway/quickstart.mdx` is served at `/mcp-gateway/quickstart`.
 
 | Tab | Directory | What it covers |
 | --- | --- | --- |
-| **Guides** | `introduction.mdx`, `getting-started/`, `guides/` | What Receipt is, your account and first chat, connecting an app, background runs, receipts and replay, then day-to-day work: files, conversations, errors and limits, monitoring runs, Slack, and getting help. |
-| **Platform** | `platform/` | Organizations and workspaces, members and roles, model policy and bring-your-own-key, guardrails, org skills and knowledge, usage and billing, integrations, connection scopes, tool permissions, the MCP gateway, and data handling. |
-| **CLI** | `cli/` | The released `receipt` binary that end users install: install, setup, workspaces, connect, tools and MCP, and observing Claude Code. |
-| **Developers** | `develop/` | Platform architecture, receipts and streams, jobs and durable execution, the runtime API, and the TypeScript SDK. |
-| **Self-hosting** | `self-hosting/` | Running Receipt yourself: the constraints to read first, configuration, database and migrations, the integrations provider, and deploying. |
-| **Working from source** | `repo/` | Running the Receipt monorepo locally, the fuller in-repo CLI, Factory, authoring agents, and testing and simulation. |
+| **Receipt AI Co-Worker** | `introduction.mdx`, `co-worker/` | What Kentron is, then the chat product: first chat, background runs, replay, skills in chat, conversations, files, monitoring, Slack, Teams, how it works, objectives and tasks, errors and limits. |
+| **MCP Gateway** | `mcp-gateway/` | Workspaces, connecting apps, Receipt Connect, connection scopes, tools and permissions, the aggregate MCP server, gateway activity, the security model, troubleshooting. |
+| **LLM Gateway** | `llm-gateway/` | The Model Gateway: models and providers, bring your own key, model and compliance policy, usage and spend, configuration. |
+| **Kentron Catalog** | `catalog/` | Agent Registry, the connector catalog, organization skills, writing a skill, Org Brain and Knowledge. |
+| **Kentron Guard** | `guard/` | What is enforced and what is configurable only: guardrails, policies, access control, receipts as audit trail, data handling and security. |
+| **Kentron Core** | `core/` | Accounts, organizations, members, billing; architecture, receipts, jobs, the Factory engine; runtime API, SDK, authoring agents; configuration; local development, self-hosting, database, integrations provider, deploying, health; getting help. |
+| **Receipt CLI** | `cli/`, `cli/from-source/` | The released `receipt` binary (install, quickstart, sign-in, doctor, workspaces, connect, tools and MCP, Claude Code observation, command reference, environment, troubleshooting) and the in-repo developer CLI. |
 
-Two `receipt` command surfaces exist and the docs keep them apart on purpose: the **CLI** tab is the public
-binary an end user installs, and **Working from source** covers the in-repo CLI that needs Bun and the monorepo.
+Two `receipt` command surfaces exist and the docs keep them apart on purpose: the **Receipt CLI** tab documents
+the public binary an end user installs, and its **Developer CLI (from source)** group covers the in-repo CLI that
+needs Bun and the monorepo.
 
 Supporting files, none of which are published:
 
 | Path | Purpose |
 | --- | --- |
 | `docs.json` | Site config: theme, colors, logo, navigation, navbar, footer, redirects. The single source of truth for what appears in the sidebar. |
+| `images/<section>/` | Product screenshots referenced from pages. Captured from the live application and sanitized before capture; no real names, emails, IPs, account or instance ids. |
 | `scripts/check-docs.mjs` | Zero-dependency validation harness (see below). |
-| `docs/` | The plan and design spec the site was built from. |
-| `research/` | Source-of-truth research notes, written from the Receipt codebase, that the pages were drafted from. |
-| `.mintignore` | Keeps `docs/`, `research/`, `scripts/`, `README.md`, and `*.draft.mdx` out of the build — not published, not indexed, not reachable by URL. |
+| `docs/` | The design specs and implementation plans the site was built from. |
+| `research/` | Source-of-truth research notes written from the Receipt codebase (`research/2026-09-08/` is the corpus behind the seven-section site, with per-report fact-check files). |
+| `.mintignore` | Keeps `docs/`, `research/`, `scripts/`, `README.md`, and `*.draft.mdx` out of the build. |
 | `logo/`, `favicon.svg` | Brand assets referenced from `docs.json`. |
 
 ## Running it locally
 
-**Prerequisites:** Node.js 18 or newer (this project is developed on Node 24) and npm.
+**Prerequisites:** Node.js 18 or newer and npm.
 
 ```bash
 # 1. Install the Mintlify CLI, once, globally
 npm i -g mint
 
-# 2. From the repository root — the directory holding docs.json
+# 2. From the repository root, the directory holding docs.json
 mint dev
 ```
 
-The preview is served at <http://localhost:3000> and hot-reloads as you edit. Pass `--port` if 3000 is taken:
-
-```bash
-mint dev --port 3333
-```
+The preview is served at <http://localhost:3000> and hot-reloads as you edit. Pass `--port` if 3000 is taken.
 
 Other useful commands:
 
@@ -60,10 +54,6 @@ mint update          # upgrade the CLI to the latest version
 mint broken-links    # scan every page for internal links that do not resolve
 ```
 
-> If `mint dev` renders a page differently from production, upgrade first — the CLI must be current to match the
-> deployed renderer. The older `mintlify` npm package is superseded by `mint`; uninstall it with
-> `npm uninstall -g mintlify` if it is still on your machine.
-
 ### Validate before you commit
 
 ```bash
@@ -71,18 +61,19 @@ node scripts/check-docs.mjs            # construction mode
 node scripts/check-docs.mjs --complete # release mode: every nav entry must have a file
 ```
 
-The harness needs no dependencies and enforces five things:
+The harness needs no dependencies and enforces six things:
 
-1. **Navigation** — no page is listed twice in `docs.json`.
-2. **No orphans** — every content file is referenced in the navigation, and (with `--complete`) every navigation
+1. **Navigation**: no page is listed twice in `docs.json`.
+2. **No orphans**: every content file is referenced in the navigation, and (with `--complete`) every navigation
    entry has a file behind it.
-3. **Frontmatter** — every page has a frontmatter block with a non-empty `title`.
-4. **Internal links** — every `/absolute` link resolves to a real page or a declared redirect.
-5. **Publication safety** — no cloud account numbers, IAM ARNs, instance ids, public IP addresses, personal home
+3. **Frontmatter**: every page has a frontmatter block with a non-empty `title`.
+4. **Internal links**: every `/absolute` link resolves to a real page or a declared redirect.
+5. **Images**: every `/images/...` reference resolves to a file on disk.
+6. **Publication safety**: no cloud account numbers, IAM ARNs, instance ids, public IP addresses, personal home
    directory paths, private hostnames, internal deploy resource names, or named individuals. This site is public;
    this check is what keeps internal identifiers off it.
 
-A green run prints `OK  48 pages, 48 navigation entries, complete`.
+A green run prints `OK  81 pages, 81 navigation entries, complete`.
 
 ### Adding a page
 
@@ -95,19 +86,31 @@ A green run prints `OK  48 pages, 48 navigation entries, complete`.
    ---
    ```
 
-2. Add its slug — the path without the extension, e.g. `guides/your-page` — to the correct group in `docs.json`.
+2. Add its slug, the path without the extension, to the correct group in `docs.json`.
    A file that is not in the navigation fails the orphan check.
-3. Run `node scripts/check-docs.mjs --complete` and `mint dev` to confirm it builds and reads correctly.
+3. End the page with a `Next step:` link to the page that follows it in the navigation.
+4. Run `node scripts/check-docs.mjs --complete` and `mint dev` to confirm it builds and reads correctly.
 
 If you move or rename a page, add a `redirects` entry in `docs.json` from the old slug to the new one so existing
 links keep working.
 
+### Adding a screenshot
+
+Put the PNG under `images/<section>/`, then embed it:
+
+```mdx
+<Frame caption="What the reader is looking at and what to notice.">
+  <img src="/images/<section>/<name>.png" alt="A sentence describing the screen." />
+</Frame>
+```
+
+Screenshots must not show real names, email addresses, IP addresses, cloud account or instance identifiers, or
+internal resource names. Replace them before capture.
+
 ## Deploying changes
 
-Deployment is Git-driven. Mintlify's GitHub App watches `kentronai/kentronai-docs` and rebuilds the site whenever
-the production branch changes — there is no build step to run and no artifact to upload.
-
-**The normal flow:**
+Deployment is Git-driven. Mintlify's GitHub App watches the repository and rebuilds the site whenever the
+production branch changes.
 
 ```bash
 git checkout -b docs/your-change
@@ -119,32 +122,19 @@ git commit -m "Describe the documentation change"
 git push -u origin docs/your-change
 ```
 
-Open a pull request against `main`. The Mintlify GitHub App comments on the PR with a **preview deployment** URL —
-a unique, non-configurable URL for that branch — so reviewers see the rendered pages before anything ships. Merging
-to `main` triggers the production deployment; it typically completes in a minute or two, after which the change is
-live at `docs.kentron.ai`.
-
-Pushing straight to `main` also deploys, and skips the preview. Use a branch for anything beyond a typo.
-
-**Verifying and troubleshooting a deploy:**
+Open a pull request against `main`. The Mintlify GitHub App comments on the PR with a preview deployment URL so
+reviewers see the rendered pages before anything ships. Merging to `main` triggers the production deployment.
 
 - The **Mintlify dashboard** (`dashboard.mintlify.com`) shows deployment history, build logs, and the status of the
-  GitHub connection. A failed build is reported there and in the PR check, not in this repository.
+  GitHub connection.
 - A page you added that does not appear on the live site is almost always missing from `docs.json` navigation, or
   matched by a `.mintignore` pattern.
-- Pull requests **from forks** do not get preview deployments — the GitHub App cannot read forks. Push the branch to
-  this repository instead.
-- The custom domain applies only to production. Preview URLs are always Mintlify-hosted.
-
-**First-time or restored setup** (only if the repository is not already connected): in the Mintlify dashboard, install
-the GitHub App on the `kentronai` organization, grant it access to `kentronai-docs`, set the production branch to
-`main`, and enable preview deployments for pull requests. The custom domain is configured under the dashboard's
-domain settings, which issue the TXT and CNAME records to add at the DNS provider.
+- Pull requests from forks do not get preview deployments. Push the branch to this repository instead.
 
 ## Conventions
 
-- **Receipt-only scope.** The site documents Receipt on Kentron. Internal runbooks, account identifiers, and
-  employee-specific flows do not belong here.
-- **Code is the source of truth.** Do not document a command, flag, or limit that has not been verified against the
-  Receipt codebase — prose in other repositories goes stale.
+- **Code is the source of truth.** Do not document a command, flag, limit, or behaviour that has not been verified
+  against the Receipt codebase; the research notes under `research/` record where each claim comes from.
+- **Say what runs.** A feature that exists in the interface but is not enforced or not executable gets a status
+  callout at the top of its page; it is never described as working.
 - **No orphans.** Every file is reachable from `docs.json`; drafts live in `*.draft.mdx`, which is ignored by the build.

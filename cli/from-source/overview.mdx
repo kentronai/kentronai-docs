@@ -1,0 +1,264 @@
+---
+title: "The in-repo developer CLI"
+description: "The second program named receipt: how the wrapper starts it, the order it loads environment files, the parsing traps, and what receipt doctor does and does not tell you."
+---
+
+Inside a Receipt checkout there is a second, much larger `receipt`. It reads receipt streams, drives the job queue, runs deterministic simulations and evaluations, and controls Factory end to end — the whole developer surface the released binary leaves out. It runs the TypeScript source directly, so an edit to a CLI file takes effect on the next invocation, and it shares its saved session with the released binary: sign in with one and you are signed in for the other.
+
+This page covers the program itself — how it starts, what it reads, and how it parses what you type. The commands are on the pages beside it.
+
+<CardGroup cols={2}>
+  <Card title="Receipts and jobs" icon="receipt" href="/cli/from-source/receipts-and-jobs">
+    Trace, replay, inspect and fork streams; enqueue, steer and abort jobs.
+  </Card>
+  <Card title="Factory concepts" icon="diagram-project" href="/cli/from-source/factory-overview">
+    Objectives, tasks, candidates, checks and the promotion gate.
+  </Card>
+  <Card title="Factory command reference" icon="terminal" href="/cli/from-source/factory-reference">
+    Every `receipt factory` subcommand, flag and envelope.
+  </Card>
+  <Card title="Testing and simulation" icon="flask" href="/cli/from-source/testing-and-simulation">
+    The check pyramid, deterministic simulation, evals and stack validation.
+  </Card>
+</CardGroup>
+
+## Which `receipt` am I running?
+
+Two programs share the name. The one you install on your own machine is the released binary, documented in [The receipt CLI](/cli/overview). The one on this page runs only from a git checkout, launched by the shell wrapper `.receipt/bin/receipt`, and needs Bun — plus Postgres for most of its commands. Its entry file is `packages/receipt-app/src/cli.ts`.
+
+The surfaces overlap more than their sizes suggest: `setup`, `login`, `logout`, `connect`, `workspace`, `tools`, `mcp`, `import` and `observe` exist in both, and both answer to `doctor` — though `doctor` is a different command in each. Two commands tell the programs apart:
+
+| You type | Released binary | This CLI |
+|---|---|---|
+| `receipt --version` | Prints `receipt <version>` | Not a command at all. It falls through the dispatcher and throws `Unknown command '--version'` |
+| `receipt whoami` | Not a command. The word is read as a target and rejected with `receipt connect target must be prod, dev, local, or an http(s) URL` | Prints the target, workspace and gateway of the saved session |
+
+<Note>
+The two `doctor` commands answer different questions. The released binary's [`receipt doctor`](/cli/doctor) resolves your endpoint and reports the saved session, over the network, without signing in. This one never touches the gateway: it probes local binaries, the git repository, the Factory config and your cloud logins. Neither one checks a model key.
+</Note>
+
+## How the wrapper starts it
+
+`.receipt/bin/receipt` is a `#!/bin/sh` script, not TypeScript. In order, it:
+
+1. Resolves symlinks to find its own real path, sets the root directory to two levels above itself, and `cd`s there. This is why you can symlink the wrapper onto your `PATH` from anywhere and still have it run against the checkout it belongs to.
+2. Exports `RECEIPT_REPO_ROOT`, defaulting to that root directory.
+3. Exports `RECEIPT_REPO_KEY`, defaulting to the value baked into the wrapper. Both of these are set with the shell's `${VAR:-default}` form, so a value you exported first is kept; set `RECEIPT_REPO_KEY` yourself if you need a different repo key.
+4. Resolves a Bun runtime, in this precedence: `$RECEIPT_BUN_BIN` if executable, then `$BUN_BIN` if executable, then `bun` on `PATH`, then `$BUN_INSTALL/bin/bun`, then `$HOME/.bun/bin/bun`.
+5. `exec`s that Bun binary on `<root>/packages/receipt-app/src/cli.ts`, falling back to `<root>/src/cli.ts` if the first path does not exist.
+
+There is no build step. Bun runs the TypeScript source directly, so an edit to a CLI source file takes effect on the next invocation.
+
+<Warning>
+If no Bun can be resolved, the wrapper prints exactly this to standard error and returns **127**:
+
+```
+receipt CLI requires Bun. Set RECEIPT_BUN_BIN or install Bun on PATH.
+```
+</Warning>
+
+Two package scripts wrap the wrapper: `bun run receipt:cli` runs `./.receipt/bin/receipt`, and `bun run receipt:factory` runs `./.receipt/bin/receipt factory`.
+
+### Bare `receipt`, help, and exit behaviour
+
+- With **no command at all**, and with both stdin and stdout attached to a TTY, the CLI applies the saved session's environment defaults and opens the Factory board. Non-interactively, it prints the usage text instead. The released binary does the opposite in both cases: a bare `receipt` there starts a browser sign-in.
+- `help`, `--help` or `-h` as the first token prints usage. `receipt connect --help` prints the separate Receipt Connect usage.
+- After the command settles, the CLI flushes stdout, then stderr, then exits. Set `RECEIPT_CLI_NO_FORCE_EXIT=1` to disable that forced exit.
+- An uncaught error prints exactly `error: <message>` to standard error and sets exit code 1.
+
+## Environment loading, and what wins
+
+Environment files are loaded at module load, **before anything else is imported**, so the values are in place for every later import.
+
+First the CLI finds the repository root: it walks up from the current working directory, then up from the module's own directory, and takes the first directory that contains all three of `package.json`, `packages/receipt-app/`, and `apps/start/`. If no such directory is found, nothing is loaded at all — which is what makes the same code safe inside a released binary.
+
+Files are then read in two passes, in this order:
+
+| # | File | Notes |
+|---|---|---|
+| 1 | `<repo>/.env` | |
+| 2 | `<repo>/.env.local` | |
+| 3 | `<repo>/apps/start/.env` | |
+| 4 | `<repo>/apps/start/.env.local` | |
+| 5 | `<repo>/.deploy-artifacts/local-up/latest.env` | Generated. Skipped when `RECEIPT_CLI_LOAD_LOCAL_ENV=0` |
+| 6 | `$START_ALL_ENV_FILE` | |
+| 7 | `$RECEIPT_LOCAL_ENV_FILE` | |
+| 8 | `$VALIDATE_STACK_ENV_FILE` | |
+| 9 | each comma-separated path in `$START_ALL_ENV_FILES` | |
+| 10 | each comma-separated path in `$VALIDATE_STACK_ENV_FILES` | |
+
+Missing files are silently skipped, and the generated files are de-duplicated by resolved path.
+
+Two rules govern precedence, and they are not the same rule:
+
+- **Later files override earlier files.** A value set in `apps/start/.env.local` beats the same value in `<repo>/.env`.
+- **A value already exported in your shell always wins.** The set of protected keys is snapshotted once, before any file is read — so a variable an earlier file introduced is not protected, and a later file can still override it.
+
+That second rule is why `receipt` picks up a one-off `RECEIPT_CONNECT_GATEWAY_URL=… receipt …` without you editing any file.
+
+<Note>
+The `.env` parser accepts `KEY=value` with an optional leading `export`, skips blank and `#` lines, and silently ignores any line that does not match. Double-quoted values unescape `\n`, `\r`, `\t`, `\"` and `\\`; single-quoted values are taken literally; unquoted values have a trailing ` #comment` stripped and are then trimmed.
+</Note>
+
+## Argument parsing
+
+The parser is small and has no short flags other than `-h`:
+
+- `--key=value` and `--key value` both set `key`.
+- `--key` at the end of the arguments, or followed by another `--…` token, sets `key` to boolean `true`.
+- A repeated flag **accumulates into an array**. Accessors that expect a single value take the last one.
+- A bare `--` stops flag parsing; everything after it becomes a positional argument. A bare `--` at the very front is dropped before the first token is taken as the command.
+
+<Warning>
+**`--json` means two different things.** For read commands it is a boolean that selects machine-readable output. For `receipt tools call`, `receipt connect call` and `receipt mcp` it is the **JSON argument payload** for the call:
+
+```bash
+receipt connect call github:work list_issues --json '{"state":"open"}'
+```
+
+The value must parse as a JSON object, or the command throws `--json must be a JSON object`. Those commands always print JSON, so there is no way — and no need — to ask them for a JSON output mode.
+</Warning>
+
+Boolean flags are compared inconsistently across handlers: some accept only `true` or the string `"true"`, others also accept `1`, `yes` or `on`. Pass the bare flag and you will always get the behaviour you expect.
+
+<Note>
+`workspace`, `tools` and `mcp` are handled by separate sub-CLIs. The dispatcher re-serialises your arguments before handing them over, which does not preserve flag order and re-emits a repeated flag as a single comma-joined value. Those sub-CLIs have their own simpler parser that does not support repeated flags at all.
+</Note>
+
+## What this CLI has that the released binary does not
+
+The dispatcher has 27 top-level commands. These sixteen exist only here:
+
+`whoami`, `new`, `dev`, `run`, `trace`, `replay`, `inspect`, `fork`, `dst` (undocumented alias `simulate`), `eval`, `jobs`, `abort`, `memory`, `sessions`, `debug`, `factory`
+
+plus four extras under `connect`: `import-local-aws`, `import-local-github`, `nango`, and `token` (aliases `jwt`, `mint`). `receipt connect doctor` and `receipt connect check` also mean something else here — they run an integrations health probe that requires a webhook secret in the environment, not the released binary's read-only endpoint check.
+
+Everything else — `setup`, `login`, `logout`, `doctor`, `connect`, `workspace`, `tools`, `mcp`, `import`, `observe` — shares a name with the released binary. An unknown command throws `Unknown command '<command>'`.
+
+The usage text groups the surface as **User commands**, **Developer commands**, **Worker/debug commands** and **Legacy agent-framework commands**; `new`, `dev` and `run` are the legacy group.
+
+<Note>
+`proxy` is still a case in the dispatcher but always throws. It has been removed.
+</Note>
+
+## Signing in
+
+`receipt login`, `receipt logout` and `receipt whoami` manage **the same session store the released binary uses**: `~/.receipt/session.json`, or `$RECEIPT_CLI_SESSION_FILE` if set, inside `$RECEIPT_CLI_CONFIG_DIR` if set. A login also writes a per-target file, `session.<target>.json` for `prod`, `dev` or `local` — unless `RECEIPT_CLI_SESSION_FILE` is set, which suppresses per-target files entirely.
+
+Signing in with one program therefore signs you in for the other.
+
+At the top of every command, the saved session seeds environment defaults, **but only for variables that are not already set**:
+
+| Environment variable | Session field |
+|---|---|
+| `RECEIPT_CONNECT_GATEWAY_URL` | `gatewayUrl` |
+| `RECEIPT_CONNECT_PUBLIC_GATEWAY_URL` | `gatewayUrl` |
+| `RECEIPT_CONNECT_TOKEN` | `token` |
+| `RECEIPT_CONNECT_ORGANIZATION_ID` | `organizationId` |
+| `RECEIPT_CONNECT_WORKSPACE_ID` | `workspaceId`, when present |
+| `RECEIPT_CONNECT_WORKSPACE_NAME` | `workspaceName`, when present |
+| `RECEIPT_CONNECT_USER_ID` | `userId`, when present |
+
+This is why commands that demand an actor identity — `receipt memory`, for one — usually work after a login without any flags. It is also why an explicit environment value still wins, so CI and one-off commands can target another gateway.
+
+`receipt whoami` prints the target, workspace and gateway and never prints the token; with nothing saved it prints `receipt whoami: not signed in`. `receipt logout` deletes the session file or files and unsets `RECEIPT_CONNECT_TOKEN` in the current process, printing `receipt logout: removed saved CLI session` or `receipt logout: no saved CLI session found`.
+
+<Warning>
+The saved session holds a live bearer token in plaintext and is good for twelve hours, so everything in [Sign in: setup, login, and logout](/cli/setup) about protecting that file applies here unchanged.
+</Warning>
+
+## `receipt doctor`
+
+```bash
+receipt doctor [--json] [--output-file <path>] [--repo-root <path>]
+```
+
+`--repo-root` defaults to the current working directory, which the wrapper has already set to the repo root.
+
+### What it probes
+
+- **Five binaries** — `bun`, `git`, `gh`, `aws` and `codex`. Each is resolved from its own override variable (`RECEIPT_BUN_BIN`, `RECEIPT_GIT_BIN`, `RECEIPT_GH_BIN`, `RECEIPT_AWS_BIN`, `RECEIPT_CODEX_BIN`) before falling back to a lookup on `PATH`. Each resolved binary is then run with `--version`, and the first non-empty output line is reported as its version.
+- **The git repository** — only when `git` resolved. It reads the top level, the current branch, the porcelain status, and the remotes.
+- **The Factory config** — it reads `<repo root>/.receipt/config.json` and reports the path and whether it is present. A file that is present but unparsable still counts as present; it just yields no data directory.
+- **The data directory** — `$RECEIPT_DATA_DIR`, then `$DATA_DIR`, then the config's `dataDir`, then `<repo root>/.receipt/data`.
+- **GitHub and AWS authentication** — `gh auth status` and `aws sts get-caller-identity --output json`.
+
+It also reports the execution path and computer provider it would use.
+
+### Blocking versus warning
+
+Exactly four conditions are blocking. These, and only these, set `ok` to `false`:
+
+```
+bun unavailable: <error|missing>
+git unavailable: <error|missing>
+codex unavailable: <error|missing>
+repo invalid: <error|not a git repository>
+```
+
+Everything else is a warning and never affects `ok`:
+
+```
+Factory config missing at <configPath>
+GitHub auth unavailable: <error|gh auth status failed>
+AWS auth unavailable: <error|aws sts get-caller-identity failed>
+```
+
+A missing `gh` or `aws` binary is *not* a separate blocker — the missing-binary error is folded into the corresponding auth warning.
+
+### It never sets a non-zero exit code
+
+<Warning>
+`receipt doctor` exits `0` even when it reports `ok: false` with blocking issues. `receipt doctor && next-step` will always run `next-step`.
+
+Automation must read the structured output — the `ok` field and the `blockingIssues` array — rather than `$?`.
+</Warning>
+
+```bash
+receipt doctor --json | jq -e '.ok and (.blockingIssues | length) == 0'
+```
+
+The JSON report has these keys, with optional ones omitted rather than set to `null`:
+
+```json
+{
+  "ok": true,
+  "cwd": "…",
+  "requestedRepoRoot": "…",
+  "dataDir": "…",
+  "configPath": "…/.receipt/config.json",
+  "configPresent": true,
+  "execution": { "path": "…", "computerProvider": "…" },
+  "binaries": { "bun": {}, "git": {}, "gh": {}, "aws": {}, "codex": {} },
+  "repo": { "ok": true, "root": "…", "branch": "…", "dirty": false, "changedCount": 0, "remotes": [] },
+  "auth": { "github": {}, "aws": {} },
+  "blockingIssues": [],
+  "warnings": []
+}
+```
+
+Each entry under `binaries` carries `ok`, `path`, `source` (`override`, `runtime` or `lookup`), `version` and `error`. In text mode the first line is `doctor: ok` or `doctor: blocked`.
+
+### There is no model-key check
+
+The text output always prints this fixed line, whatever your configuration:
+
+```
+provider auth: organization BYOK required
+```
+
+It is a constant, not a probe. `receipt doctor` performs **no** check of any model API key and has no `openAiApiKey` field in its report, despite what older repo markdown claims. Model credentials resolve from organization BYOK rows, not from a process variable.
+
+## One binary, three `--output-file` envelopes
+
+Do not assume a single shape when you script against `--output-file`:
+
+| Commands | Envelope printed to stdout in JSON mode |
+|---|---|
+| `trace`, `replay`, `inspect`, `dst`, `jobs list`, `jobs wait`, `memory *`, `sessions *`, `doctor`, `debug *`, `import`, `observe`, `connect status/check/list/tools/call` | `{ "ok": true, "outputFile": "<abs path>", "format": "json", "bytes": <n> }` |
+| `eval *` | `{ "ok": true, "outputFile": "<abs path>" }` — no `format`, no `bytes` |
+| `tools *` (accepts `--output` or `--output-file`, writes atomically at mode `0600`) | `{ "ok": true, "outputFile": "<abs path>", "bytes": <n> }` — no `format` |
+
+In text mode the first two print `wrote <abs path>` instead. `receipt tools` has no output mode to switch — its `--json` is the argument payload — so it always prints the envelope above. The path is resolved to an absolute path and its parent directories are created for you. Without `--output-file`, the payload goes to standard output.
+
+Next step: [read receipts and drive jobs](/cli/from-source/receipts-and-jobs).

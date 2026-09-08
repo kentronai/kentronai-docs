@@ -1,0 +1,74 @@
+---
+title: "Your first chat"
+description: "Learn the composer as it actually behaves, including the Skills chip, the + menu, and which controls do nothing on a turn."
+---
+
+Open **Chat**, type what you want in plain language, and press send. Receipt either answers you directly in the thread or, when the request needs evidence from a connected system, starts a background run and reports back when it is done. This page walks the composer control by control, so you know what each one does before you rely on it.
+
+<Warning>
+**Two composer controls do not change what Receipt does in this release.** The checkboxes in the **Tools** group of the `+` menu — Web Search and Code Interpreter included — are recorded with your thread but never read when a turn runs: direct answers are sent with no tools attached, and background runs do not consult them either. And **Study Mode** pins `openai/gpt-oss-120b`, a model this release cannot reach: the catalog routes it through Azure and the shared AI gateway only, while Receipt executes OpenAI and Anthropic routes. A turn sent in Study Mode therefore ends in an error instead of an answer. Everything else on this page works as described.
+</Warning>
+
+## Starting a chat
+
+A new chat opens on an empty state: `Hello, <name>` and `What would you like to explore?` The message box's placeholder cycles through 25 example goals, a new one every 3.2 seconds, each starting `Ask Receipt to …` — for instance `Ask Receipt to review IAM roles for overly broad permissions` or `Ask Receipt to check for expired SSL certificates across domains`. They are examples of the kind of request Receipt is built for, not commands; type your own goal in your own words. Once you're inside a thread, the placeholder becomes `Ask anything`.
+
+When you send, Receipt first decides what kind of turn this is. A question it can answer from the conversation gets a streamed reply in the thread. A request that needs current data from your connected systems, a file, code, or anything outside the chat becomes a [background run](/co-worker/background-runs). A request to write a new organization skill gets a draft you can review. While that decision is being made, the thread shows a status line above the reply — `Sending your message to Beetle...` first, then whatever the run reports. Beetle is the assistant's name in the interface. The three routes are described in [What the AI Co-Worker does](/co-worker/overview), and the pipeline behind them in [How it works](/co-worker/how-it-works).
+
+## Sending a message
+
+The submit button changes label as your message moves through its lifecycle: **Send message** while idle, **Sending...** once you've submitted, **Stop generation** while the response streams, and **Error** if something goes wrong. While a response is streaming, the same button doubles as a stop control.
+
+Sending is blocked while a file attachment is still uploading and while the thread has reached its context limit (see [Reading the context meter](#reading-the-context-meter) below).
+
+## The `+` menu
+
+<Frame caption="A new chat with the + menu open. The greeting shows the signed-in user's name (a placeholder here), the placeholder prompt is one of the rotating examples, and the menu lists Attach files, a Skills submenu, Study Mode, and a Tools group with Web Search and Code Interpreter checked. There is no Max entry, because the active model has no separate maximum window.">
+  <img src="/images/co-worker/composer-plus-menu.png" alt="The Receipt chat composer on an empty new chat, with the plus menu expanded to show Attach files, Skills, Study Mode, and the Tools checkboxes." />
+</Frame>
+
+Next to the message box, the `+` menu opens:
+
+- **Attach files** — attach up to ten files per message. At the limit, the label itself changes to **Attach files (max reached)**. Accepted types and size limits are on [Files and attachments](/co-worker/files-and-attachments).
+- **Skills** — a submenu with one item, **Create skill**, which opens the organization's Skills page on its list, not on the upload picker the chip's identically named item opens. It is a shortcut for administrators; picking a skill to use is the job of the Skills chip described below.
+- **Study Mode** — the only mode Receipt ships today. It pins the thread to one fixed study model, injects a study system prompt, and disables all provider-native tools for that thread; while it is on, the Tools group disappears from this menu. If your organization enforces a mode, the checkbox is disabled and its tooltip reads `Study Mode is enforced by your organization`. See the callout at the top of this page before you turn it on.
+- **Max** — appears only when the active model has a distinct maximum context window to switch into. If the model doesn't have one, you won't see this control at all.
+- **Tools** — a checkbox group listing the provider tools available to the active model, hidden while Study Mode is on.
+
+Checking a tool's box does not mean the model will use it on this turn. Direct answers are sent with no tools attached at all, and a background run decides what to call from the request itself. Real tool work happens only inside a background run, against the connections your organization has enabled. This is the single most common misunderstanding about the composer.
+
+## The Skills chip
+
+Beside `+` sits a **Skills** chip. It is how you tell a run to follow one of your organization's skills — the versioned instruction files an owner or admin has added on the Skills page.
+
+<Frame caption="The Skills chip open on a new chat. Under the heading Use a skill, each enabled skill is listed by name with its slug underneath; six are shown here, the menu's maximum. Create skill and Manage skills are further down the same menu, below the edge of this capture.">
+  <img src="/images/co-worker/composer-skills-menu.png" alt="The Skills chip menu in the Receipt composer, listing six enabled organization skills with their slugs under the heading Use a skill." />
+</Frame>
+
+- Under **Use a skill**, pick a skill and its slug is appended to whatever you have already typed as `/slug`, separated by a space from the text in front of it and followed by another — it composes with a half-written prompt rather than replacing it. Type the rest of your request around it and send as usual.
+- Only skills that are active and enabled appear, and any member of the organization can pick one. The menu shows at most six; when there are more, a final line counts the rest — `3 more on the Skills page` — and opens the page.
+- With nothing enabled, the menu says `No enabled skills yet.`
+- **Create skill** opens the Skills page and asks the browser for its upload picker straight away, so you land on the file chooser rather than on a list; if the browser refuses to open a file dialog it did not initiate, the page's **Add skill** button is focused instead. **Manage skills** opens the page itself. Both destinations are owner and admin only; a member who picks them never sees the page or an access-denied screen — the settings route sends them to `/`, which puts a signed-in user back in Chat.
+
+The slug is ordinary text in your message. Receipt does not treat it as a command: the router and any background run read it like the rest of your prompt. What a run does with it, and how to have Receipt draft a new skill from the conversation, is on [Skills in chat](/co-worker/skills-in-chat); the files themselves are described under [Skills](/catalog/skills).
+
+## What you can't change here
+
+The model picker and the reasoning-effort picker are not currently mounted in the composer. There's nothing to click for either one — a new chat opens on the default model, `openai/gpt-5.6-luna` unless your organization's policy rules it out, and a thread then keeps the model recorded with it. The allowlist that default is drawn from holds OpenAI-routed models only. Which models an organization can use, and how an organization supplies its own provider key, is covered in [Models and providers](/llm-gateway/models-and-providers).
+
+## Reading the context meter
+
+Once you're inside a thread and a model is resolved, a **Context** control appears showing **Input**, **Output**, **Reasoning**, **Cache read**, and **Cache write** from the most recent assistant reply on the branch you're on. A **Total cost** row sums the branch, but appears only when your organization is using its own provider key, or the operator has turned cost display on for everyone — otherwise that row is simply absent.
+
+When the branch reaches the model's limit, the composer stops accepting new messages and shows one of two banners:
+
+- `This conversation has reached the standard context limit. Switch to Max to continue with the larger window.` — when the model has a larger window and you are still on the standard one. Turn on **Max** in the `+` menu to continue.
+- `This conversation has reached its current context limit. Start a new chat to continue.` — when there is no larger window to switch to.
+
+## Titles and long pastes
+
+A thread is called `New Chat` until Receipt generates a short title from your first message. If you rename a thread yourself, that permanently turns off auto-titling for it — Receipt won't overwrite your title later.
+
+Pasting 2,000 characters or more of plain text turns the paste into a text attachment instead of inline text, as long as the embedding feature is on for your deployment. The attachment is named `pasted-text-<date>-<time>.txt` — for example `pasted-text-2026-09-08-14-05-31.txt` — and shows up in the composer like any other file. Rich text and pasted files keep the browser's normal behavior.
+
+Next step: [give Receipt a goal that needs a background run](/co-worker/background-runs).

@@ -1,0 +1,70 @@
+---
+title: "Kentron Catalog"
+description: "The four inventories Receipt keeps for an organization — cloud agents, connectable apps, skills and usage — and the things none of them do."
+---
+
+The Catalog answers one question: what does this organization actually have? Four pages hold the answer — the AI agents already running in your cloud accounts, the apps you can connect, the instructions your agents follow, and the figures that show which applications your work actually used.
+
+Nothing here is a store you install from. Each surface is an inventory of what is already true, and the scans and skill changes behind it are written as receipts.
+
+## The four inventories
+
+<CardGroup cols={2}>
+
+<Card title="Agent registry" icon="robot" href="/catalog/agent-registry">
+Scan connected AWS, Azure and Google Cloud accounts for AI agents and agent-like workloads, then review each one's autonomy level, risk and owner.
+</Card>
+
+<Card title="Connectors" icon="plug" href="/catalog/connectors">
+63 connectors you can actually connect, inside a browsable directory of about 900 entries, each connection carrying its own read and write allowlist.
+</Card>
+
+<Card title="Skills" icon="book-open" href="/catalog/skills">
+Versioned `SKILL.md` instructions, enabled or disabled for the organization and mounted read-only into every new run.
+</Card>
+
+<Card title="Org Brain" icon="chart-line" href="/catalog/org-brain">
+Which applications your objectives used over the last 30, 60 or 90 days, and whether the accounts behind them are still connected.
+</Card>
+
+</CardGroup>
+
+Writing the skill file itself has its own page: [writing a skill](/catalog/writing-a-skill).
+
+## What each surface shows
+
+**Agent Registry** — **"Discover cloud AI agents, classify autonomy, and review organization risk."** Connect a cloud account, run a scan, and the Inventory tab fills with what was found: the platform each agent runs on, what it appears to do, an autonomy level, a risk level and an owner. Owner is read from a cloud tag, or on AWS from the creator recorded in CloudTrail, and reads **Unowned** when neither exists. Scans run only when someone starts one — there is no schedule, webhook or CLI trigger — and the registry's cloud credentials live in their own connection, so discovery access is never reused as a chat connection.
+
+**Global Integrations** — the organization's connector page: **"Connected once for the whole organization and available to Receipt chat. Workspace-scoped connections for CLI and MCP clients live under MCP Gateway."** You can search and filter about 900 directory entries; only the 63 connectors Receipt ships can actually be connected, and every other card is display-only. Once connected, **Manage tools and permissions** decides which read operations and which write and delete operations that connection may perform.
+
+**Skills** — **"Add organization instructions that agents can use in Factory and computer runs. Enabled skills are available to new runs."** Each skill is one `SKILL.md` upload; re-uploading changed content adds a version. Enabled skills are snapshotted into every new run as a read-only catalog, and the agent chooses which entries to open — there is no ranking, no keyword matching, and no receipt recording which skill was read.
+
+**Org Brain** — **"A shared view of how knowledge and tools connect across the organization."** It reports over a 30-, 60- or 90-day window and refreshes automatically, with tiles for **Runs**, **Job success**, **In progress**, **Connected apps**, **Avg duration** and **Total spend**. Anything that was not measured reads **Not recorded** rather than zero. Per-call figures — per tool, per connector, per actor — live in [gateway activity](/mcp-gateway/gateway-activity) instead.
+
+<Frame caption="The Agent Registry Inventory tab after an AWS scan. Two discovered EC2 workloads are classified L4 with Critical risk and read Unowned because neither an owner tag nor a CloudTrail creator was found; the header records the last scan as AWS · completed. The left rail is where the other catalog surfaces sit — Integrations, Skills and Org Brain.">
+  <img src="/images/catalog/agent-registry-inventory.png" alt="The Agent Registry Inventory tab listing two discovered AWS EC2 agents at autonomy level L4 with Critical risk and no owner, beside a sidebar containing Agents, Integrations, Skills and Org Brain." />
+</Frame>
+
+## Who can open what
+
+| Surface | Who can open | Who can change |
+|---|---|---|
+| Agent Registry | Any signed-in organization member | Owner or admin, to connect a cloud, scan or disconnect |
+| Global Integrations | Owner or admin | Owner or admin |
+| Workspace integrations | Any organization member reaches the gateway; workspace membership decides what is listed | Workspace owner or admin |
+| Skills | Owner or admin | Owner or admin — the server refuses anyone else with **"Only organization owners or admins can manage skills."** |
+| Org Brain | Owner or admin | Read-only |
+
+The roles are the organization roles owner, admin and member. There is no catalog curator and no per-connector reviewer; see [access control](/guard/access-control).
+
+## What the Catalog is not
+
+- **No approval or vetting workflow.** A connector is connectable or it is not, a skill is enabled or disabled, an agent is discovered. Nothing carries an approved or vetted state, and nobody reviews an entry before it can be used. The Tool approval screen under Policies stores rules about pausing an agent's tool calls, and no runtime path reads them — see [policies](/guard/policies).
+- **No dependency graph.** Nothing models or displays a relationship between a connector, a skill and an agent.
+- **No plugins and no marketplace.** Neither concept exists in the product.
+- **No per-skill or per-agent usage counts.** Org Brain counts objectives per application; nothing counts skill reads or agent invocations, and the registry's **Last used** column is a modification, creation or launch time reported by the cloud provider, not telemetry.
+- **No way to add an entry by hand.** New connectors are code changes: when a search matches nothing, Global Integrations offers `Build {name} with Beetle Tasks` — Beetle is the assistant's name in the interface — which files a development task rather than enabling anything.
+
+What you do get is provenance. Every scan and every skill change — a new version, an enable, a disable, a delete — is recorded as a receipt with an actor and a time, replayable later. Connecting or disconnecting an app is not itself recorded as a receipt: see [receipts and audit](/guard/receipts-and-audit) for what is and is not.
+
+Next step: [see the agents already running in your cloud accounts](/catalog/agent-registry).

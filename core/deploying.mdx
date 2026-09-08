@@ -1,0 +1,162 @@
+---
+title: "Deploying Receipt"
+description: "The two deployment shapes, the guards that stop a bad release, the secrets a deploy needs, and why a rollback re-promotes a build rather than rebuilding one."
+---
+
+You can run Receipt as a multi-service stack behind a load balancer, or as the whole stack on one machine. Both are driven by the same service graph and both promote images tagged with the commit they were built from — so what you learn on one shape transfers to the other.
+
+This page describes the **shape** of a Receipt deployment: what runs, what the deploy refuses to do, and the release discipline the repository enforces on itself. It is not a copy of any one environment's configuration, and it deliberately carries no account, host or resource identifiers.
+
+## Two topologies
+
+**Multi-service.** The web/gateway, each runtime role, the sync layer, the durable-execution server, the integration provider and the channel adapters run as separate services **behind a load balancer**, with managed Postgres and managed Redis, and shared network storage for the runtime data directory and the sync replica. Services scale independently.
+
+**Single-host.** The whole stack runs on **one machine under a container compose file**, with a reverse proxy terminating TLS in front of it and the gateway published only on `127.0.0.1:3000`. Redis runs as a container instead of a managed service, host directories replace network storage, and a single sync process replaces the replication-manager and view-syncer split.
+
+Both shapes are wired by the same service graph, which is why routing behaves identically. Beyond routing they are genuinely different topologies. The multi-service shape buys independent scaling and managed data services; the single host buys one instance whose entire definition is a compose file and an environment file, at the cost of scaling any part of it separately. Connector coverage is the same on both — it comes from the checked-in provider catalog, not from the topology.
+
+The repository's own guidance treats an in-place rollout on the single host as the default for routine application fixes, and says not to reach for the full infrastructure path unless an operator explicitly asks for it.
+
+### Addressing
+
+How one service reaches another is **deployment-defined** — service discovery in the multi-service shape, compose service names on a single host. What is not deployment-defined is the routing table: a single declarative service graph fixes the route prefix, internal port, exposure and health path for every service, which is why local and deployed behave the same. See [Processes, roles, and routing](/core/architecture) for that table.
+
+The endpoints you call yourself are few:
+
+| What you call | Where |
+|---|---|
+| The public origin | Everything a browser or client needs, through the gateway |
+| `GET /healthz` | The runtime's liveness endpoint. Always answers 200 |
+| `GET /readyz` | The runtime's readiness endpoint. 200 when Postgres answers `SELECT 1`, otherwise **503** |
+
+The web application answers `GET /health` with `{"ok":true}`, and `HEAD /health` with an empty 200. Private services in the graph — the runtime's own prefix, the durable-execution server and the sandbox controller — answer a bare `404 Not found` to public requests, so a 404 there is the gateway working, not a broken service.
+
+## What the preflight enforces
+
+The deploy preflight is a hard gate, run as its own step before any image is built:
+
+| Requirement | Notes |
+|---|---|
+| Node.js | Pinned by `.node-version`, currently **24**. A major-version mismatch fails |
+| Bun | Pinned by the `packageManager` field, currently **1.3.12**. `./bunw` installs the pinned version locally |
+| A reachable container daemon | Checked only in deploy mode |
+| The cloud CLI | Version 2, configured with the deploy role or profile |
+
+If the container daemon is not running, the failure line starts with `Docker daemon check failed.`, repeats the daemon's own first error line, and ends with this hint:
+
+```
+Start Docker before deploying; SST builds service images during deploy.
+```
+
+A passing run prints `[preflight] Environment is ready.` A failing run prints `[preflight] Environment is not ready:` followed by one bullet per unmet requirement.
+
+Promoting an existing release skips this step along with the image build, because there is nothing left to build. The release rules below still apply.
+
+## Public origin rules
+
+Set the public origin before you deploy, not after. Better Auth, the sync layer, Receipt Connect, the integration provider and the channel adapters all derive URLs from it, and they must agree.
+
+- The deploy **refuses to start** without one. You give it either a public domain or the full public base URL; a missing value fails with `RECEIPT_PUBLIC_DOMAIN or RECEIPT_PUBLIC_BASE_URL is required for AWS deploys.`
+- The canonical base URL is **validated**. It must be HTTPS. `localhost` is rejected. So is a CDN's default hostname — put your own domain in front instead.
+- If your DNS is not managed in the deploy account, issue and validate the certificate yourself and point the deploy at it with `RECEIPT_PUBLIC_DOMAIN_CERT_ARN`.
+- Trusted origins are validated strictly. The canonical origin must be an exact HTTP or HTTPS origin with no credentials and no path, query or fragment. Every legacy origin you list in `RECEIPT_LEGACY_PUBLIC_ORIGINS` must additionally be HTTPS with no wildcard host.
+
+<Warning>
+**`BETTER_AUTH_URL` must equal the public origin.** It is the only origin the auth server trusts by default, and the session cookie's `Secure` flag follows its scheme.
+
+A mismatch does not fail loudly at boot. It fails later, at sign-in, when the browser's own origin is not on the trusted list or the session cookie is discarded — which is a much more expensive way to find out.
+
+Set `VITE_BETTER_AUTH_URL` to the same origin. It is inlined into the browser bundle at build time, and while the auth client deliberately calls `/api/auth` on whatever origin served the page, settings callback URLs are built from this value and it is rejected outright if it is not an absolute HTTP or HTTPS URL, or if it points at a CDN's default hostname.
+</Warning>
+
+## The secrets a deploy needs
+
+The deploy pipeline reads a secrets bundle from a secret store you control and pushes images to a container registry you control. Described by role, the bundle must carry:
+
+| Role | Notes |
+|---|---|
+| The auth signing secret | Randomly generated |
+| An AES-256-GCM key for organization provider keys | 32 bytes, base64 |
+| An AES-256-GCM key for Receipt Connect connection references | 32 bytes, base64 |
+| The Receipt Connect JWT secret | Shared by the web app and the runtime so tokens verify on both sides |
+| A diagnostics bearer token and its signing secret | Required on every runtime role service by the postdeploy contract |
+| The integration provider's environment secret key | Not generatable — see [Running the integration provider](/core/integrations-provider) |
+| The integration provider's webhook HMAC secret | Must match what the provider is configured with |
+| The provider's own at-rest encryption key | 32 bytes, base64 |
+| The provider dashboard password | |
+| The sync layer's admin password | Also used by the query analyzer |
+| The sandbox controller API key | Delivered to the sandbox host through a parameter the host's role may read, not through the container definition |
+
+Optional connector credentials — the per-connector OAuth application pairs and the channel-adapter credentials — live in the same bundle. Missing optional values do not block a deploy; they print `Optional secret values are empty: <names>. Related integrations may not work.`
+
+<Note>
+Every base64 key in the bundle is **length-validated before upload**: it must decode to exactly 32 bytes, or the loader refuses it with `<name> must be a base64-encoded 32 byte key.` The provider's environment secret key is validated to be a UUID v4 in the same pass.
+
+Both AES keys are irreversible once data exists. [Configuration, secrets, and keys](/core/configuration) explains why rotating one destroys what it protects.
+</Note>
+
+## Release discipline worth copying
+
+Four rules the repository enforces on itself, worth adopting whatever you deploy onto.
+
+<AccordionGroup>
+<Accordion title="Immutable image references only">
+A release manifest is validated before it is applied, and any mutable reference is rejected:
+
+```
+Release manifest <NAME> must be immutable, not <value>.
+```
+
+A `:latest` tag fails. So does a build-asset reference. If you cannot name the exact image, you cannot deploy it.
+</Accordion>
+<Accordion title="A manifest that pins every image to a full commit">
+The manifest is a versioned document carrying the release tag, the **full 40-character commit SHA**, the git ref, the stage it was built for, where the source archive came from, when it was created, and one immutable reference per service image.
+
+Applying a manifest turns off image building entirely — the deploy promotes exactly those references rather than producing new ones. A production deploy refuses to run without a release tag or a manifest location: it must promote an immutable release, never rebuild one.
+</Accordion>
+<Accordion title="A guard that refuses to deploy an unpushed commit">
+The launcher refuses a detached HEAD, fetches the remote ref, and requires the commit being deployed to be an ancestor of it. The comment in the code records why: production once ran an unpushed local commit while the remote branch was behind, and that commit was later lost.
+
+There is an override flag. Treat needing it as a signal, not a step.
+</Accordion>
+<Accordion title="Migrations are a gated deploy step">
+On the multi-service shape, the postdeploy phase launches a one-off task from the gateway task definition whose command is the migration runner, waits for it to stop, and fails the deploy on a non-zero exit — **before** it waits for services to become stable. The infrastructure deploy has already rolled the services by the time that task runs, so the migration gates whether the deploy succeeds, not the rollout itself.
+
+On the single-host shape, migrations run at host bootstrap, and again — ahead of the containers being recreated — on every rollout that changes the gateway image.
+
+See [Postgres, migrations, and the sync publication](/core/database-and-migrations).
+</Accordion>
+</AccordionGroup>
+
+The deploy also validates itself afterwards. It asserts each service's required environment variables and process role, that public URLs are HTTPS and not localhost, that no deprecated integration variable aliases are present, that required services have at least one running task, and that the sync cache URL matches the public origin and answers.
+
+## Email
+
+Receipt does not operate an email service. Outbound mail goes through an account you own, and that account needs a **verified sender identity**.
+
+For production stages the deploy has an explicit guard. It requires `AUTH_EMAIL_PROVIDER=ses` and `VITE_DISABLE_EMAIL_VERIFICATION_OTP=false`, and it checks both production sending access and a verified sender identity before it will deploy. An account still inside the provider's sandbox fails that check — move it out first.
+
+On a self-hosted build with email disabled, organization invitations fall back to copyable signup links in the invite dialog rather than failing.
+
+## Before you call it production
+
+<Warning>
+**The reference deploy pipeline's role is broadly scoped on purpose.** It carries a single bootstrap statement granting **all actions on all resources**.
+
+That is a bootstrap convenience, not a steady-state posture. Scope the role down to what your deploys actually touch before you treat the deployment as production.
+</Warning>
+
+The infrastructure is more careful elsewhere, which shows what the target looks like: runtime services get no cloud permissions at all, except the two worker roles that start, stop and describe the sandbox host; the sandbox instance role gets registry read-only, managed-instance access and read on exactly one parameter; the single-host instance role gets those same two managed policies plus an inline policy covering one parameter, two buckets, instance start/stop and describe, and sending mail through identities in its own account.
+
+## Rollback
+
+Rollback is **re-promotion, not rebuilding**.
+
+| Situation | What you do |
+|---|---|
+| A bad release on the multi-service shape | Re-promote the previous release manifest, or redeploy the older immutable image references. Every image is tagged with its commit, and the registry lifecycle expires only untagged layers and surplus `latest` tags, so commit-tagged images stay pullable |
+| A bad rollout on a single host | Each rollout first copies the compose file and the environment file aside with a timestamped suffix. Restore those two files and bring the stack back up |
+| A domain cutover that went wrong | The cutover is transactional: it fingerprints the current environment, refuses to run if the live file has drifted from the stored baseline, backs up the environment, compose file and proxy configuration, validates the new ones before installing them, and installs rollback traps that restore the backup on failure |
+| A bad database change | Rollback is only easy before the new database has accepted writes. After that the operational default is fix-forward |
+
+Next step: [check that a deployment is actually up](/core/health-and-observability) — the endpoints, logs and traces that tell you whether the release you just promoted is serving.

@@ -1,9 +1,11 @@
 ---
 title: "Install the CLI"
-description: "Install the released receipt binary and confirm it can reach the hosted Kentron gateway before you sign in."
+description: "Install the released receipt binary, confirm it can reach the hosted Kentron gateway, and know what an upgrade changes."
 ---
 
-The released `receipt` CLI is a single compiled binary that ships with the hosted origin `https://app.kentron.ai` baked in, so on the hosted app there is nothing to configure — install it and sign in.
+Sign in once, pick a workspace, and use your connections from the terminal, from Codex, or from any MCP client — all of that comes from a single program called `receipt`, installed with one line.
+
+The released CLI is a compiled binary that ships with the hosted origin `https://app.kentron.ai` baked in, so on the hosted app there is nothing to configure: install it and sign in.
 
 ## Install
 
@@ -11,34 +13,44 @@ The released `receipt` CLI is a single compiled binary that ships with the hoste
 curl -fsSL https://raw.githubusercontent.com/kentronai/receipt-cli/main/install.sh | bash
 ```
 
-The installer drops one executable, `receipt`, into `~/.local/bin`. If that directory is not already on your `PATH`, the script prints the exact line to add — add it to your shell profile to make it stick:
+That URL is the current distribution point for the released CLI. It can move, and the release tag the script defaults to can be bumped, so treat `receipt --version` as the record of what you actually installed.
+
+One executable, `receipt`, lands in `~/.local/bin`. If that directory is already on your `PATH`, the script finishes with `Run 'receipt --help' to get started.` If it is not, it prints `<bin_dir> is not on your PATH. Add it, then run 'receipt --help':` followed by the lines for your shell — `fish_add_path <bin_dir>` under fish, and otherwise the profile to append to plus the line to run now:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-## Quick start
+<Note>
+On macOS, install through the script rather than downloading a release tarball in a browser. The release binaries carry an ad-hoc code signature and are not notarized, and a browser download also arrives with a macOS quarantine attribute — the combination Gatekeeper refuses to run. A `curl … | bash` install sets no quarantine attribute.
+
+A binary that is killed the moment you start it (`Killed: 9`, exit code 137) has a missing or malformed code signature. Reinstall with the command above.
+</Note>
+
+## Check it works
 
 ```bash
-receipt --version            # confirm the binary is on your PATH
-receipt doctor               # check the CLI can reach the gateway (read-only, no sign-in)
-receipt setup                # sign in through your browser and see the connector catalog
-receipt workspace current    # show the workspace this session is bound to
-receipt mcp install codex    # wire your Receipt tools into the Codex MCP client
+receipt --version
+receipt doctor
 ```
+
+`receipt --version` prints `receipt v0.1.0-preview.7`, the release the installer currently defaults to. It is recognised only as the whole command line; `receipt --version --json` falls through to sign-in instead.
+
+`receipt doctor` is read-only — it never opens a browser and never prints a token — which makes it the safest thing to run before you have an account on the machine. On a fresh hosted install it resolves the endpoint, probes the gateway health and the sign-in URL, reports that no session is saved yet, and ends with `Run 'receipt setup' to sign in.` Add `--json` for a machine-readable envelope. [Check your install with receipt doctor](/cli/doctor) covers the full output and exit codes.
 
 ## What the installer does
 
-- Requires `curl`, `tar`, and a SHA-256 utility (`shasum` or `sha256sum`).
-- Downloads the release archive for your platform along with the published `checksums.txt`, verifies the archive against its SHA-256 line, and refuses to install if that does not match.
-- Installs one executable — `receipt` — into a local bin directory, `~/.local/bin` by default.
-- Re-running it upgrades in place. Your session directory, `~/.receipt`, is left untouched, so an upgrade does not sign you out.
+- Requires `curl`, `tar`, `awk`, and a SHA-256 utility. A missing tool stops the install with `Missing required command: <name>`, or with `Missing required command: shasum or sha256sum` when neither hashing tool is present.
+- Downloads the release archive for your platform along with the published `checksums.txt`, matches the line for your asset by exact filename, verifies the archive against it, and refuses to install when that does not match.
+- Works inside a temporary directory it deletes on exit, and installs exactly one executable — `receipt` — into a local bin directory, `~/.local/bin` by default, then prints `Installed receipt CLI at <path>`.
 
-Environment variables the installer reads: `RECEIPT_CLI_VERSION` pins a specific release tag instead of the default the script carries, `RECEIPT_CLI_BIN_DIR` changes the install directory, `RECEIPT_CLI_BIN` sets the exact destination path, and `RECEIPT_CLI_REPO` points at a different release repository. The script reads them from the environment of the shell that runs it, so in a piped install the assignment goes on `bash`, not on `curl`:
+Environment variables the installer reads: `RECEIPT_CLI_VERSION` pins a specific release tag instead of the installer's own default, `v0.1.0-preview.7`; `RECEIPT_CLI_BIN_DIR` changes the install directory, `RECEIPT_CLI_BIN` sets the exact destination path, and `RECEIPT_CLI_REPO` points at a different release repository. The script reads them from the environment of the shell that runs it, so in a piped install the assignment goes on `bash`, not on `curl`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/kentronai/receipt-cli/main/install.sh | RECEIPT_CLI_VERSION=<release-tag> bash
 ```
+
+Pin forward, not back. `v0.1.0-preview.7` is the first release that carries the hosted origin, along with `login`, `logout` and the read-only `doctor`. The release before it cannot sign in on a fresh machine: `receipt setup` stops with `receipt connect production URL is not configured yet.` unless you name the gateway yourself.
 
 <Note>
 The binary is compiled with dotenv and bunfig autoload disabled, so a stray `.env` or `bunfig.toml` in your working directory cannot change which host the CLI talks to. The endpoint is resolved from the baked-in default and the overrides described below, never from a local file.
@@ -46,23 +58,24 @@ The binary is compiled with dotenv and bunfig autoload disabled, so a stray `.en
 
 ## Supported platforms
 
-macOS and Linux, on arm64 and x64. Anything else stops with `Unsupported OS` or `Unsupported architecture`.
+macOS and Linux, on arm64 and x64. Anything else stops with `Unsupported OS: <os>` or `Unsupported architecture: <arch>`.
 
-There is no Windows build, and no npm or Homebrew distribution — the installer script above is the only channel documented here. A package named `receipt` on any package registry is not this CLI.
+There is no Windows build and no npm distribution — the installer script above is the only channel documented here. The npm package named `receipt` is unrelated to this product, so `npm install receipt` and `npx receipt` do not give you this CLI.
 
 <Note>
-The installer does not install the Claude observer companion binary, even when a release archive bundles one. That is why `receipt setup` can report the observer as not installed on a freshly installed CLI — see [Observing Claude Code](/cli/observe-claude-code).
+The installer does not install the Claude observer companion binary, even when a release archive bundles one — and the current release does not bundle one. That is why `receipt setup` can report the observer as not installed on a freshly installed CLI — see [Observing Claude Code](/cli/observe-claude-code).
 </Note>
 
-## Verify your install
+## Upgrading
 
-Before you sign in, run `receipt doctor`. It is read-only — it never opens a browser and never prints a token — so it is the safest way to confirm the CLI is wired up:
+Re-run the same one-liner. It overwrites the binary in place and never touches your session directory, `~/.receipt`, so an upgrade does not sign you out.
+
+One exception needs a hand: if you installed an early build that was named `kentronai`, remove the stale binary after upgrading and re-run `receipt mcp install codex`, so the MCP entry points at the new path.
 
 ```bash
-receipt doctor
+rm -f ~/.local/bin/kentronai
+receipt mcp install codex
 ```
-
-On a fresh hosted install it resolves the endpoint, probes the gateway health and the sign-in URL, and reports that no session is saved yet, ending with `Run 'receipt setup' to sign in.` Add `--json` for a machine-readable envelope. [Check your install with receipt doctor](/cli/doctor) covers the full output and exit codes.
 
 ## Dev or self-hosted deployments
 
@@ -92,4 +105,4 @@ receipt setup --target local
 
 It defaults to gateway `http://127.0.0.1:8787` and auth `http://127.0.0.1:3000`. Override those with `RECEIPT_CONNECT_LOCAL_SERVER_URL` and `RECEIPT_CONNECT_LOCAL_AUTH_URL`. The auth URL must be the exact origin your browser uses, because the device-approval page needs your Better Auth cookie.
 
-Next step: [sign in with receipt setup](/cli/setup).
+Next step: [take the five-minute quickstart](/cli/quickstart).

@@ -1,0 +1,424 @@
+---
+title: "Configuration, secrets, and keys"
+description: "The variables Receipt actually reads, what breaks without each one, and the key rotation that cannot be undone."
+---
+
+Receipt is configured entirely through environment variables. Three of them decide whether the process starts at all. Two encryption keys decide whether you can still read your stored credentials tomorrow. The rest switch optional subsystems on and tune what is already running.
+
+There is no central environment schema in Receipt — no zod, no t3-env. Most modules validate lazily, so a wrong value usually surfaces as a runtime error on the feature you touched, not at boot. The three variables below are the ones you cannot get past: the two Better Auth values are read at module top level and kill the process at import, and the database URL throws the moment anything opens a connection, which is the first request that touches data.
+
+## Three variables the process cannot start without
+
+| Variable | Exact failure |
+|---|---|
+| `BETTER_AUTH_URL` | `Missing BETTER_AUTH_URL. Configure apps/start/.env before starting auth.` |
+| `BETTER_AUTH_SECRET` | `Missing required environment variable BETTER_AUTH_SECRET.` |
+| `ZERO_UPSTREAM_DB` | `Missing required environment variable ZERO_UPSTREAM_DB.` on the app side; `Receipt Postgres storage requires ZERO_UPSTREAM_DB.` from the Receipt runtime; `ZERO_UPSTREAM_DB is not set. Set it in apps/start/.env or .env.local.` from the database scripts |
+
+### `BETTER_AUTH_URL` — an origin, nothing more
+
+`BETTER_AUTH_URL` must be the exact public origin you browse to. Trailing slashes are stripped. It has to be an absolute HTTP or HTTPS origin with no credentials, path, query or fragment — HTTP is allowed so local development on `http://localhost:3000` works — and anything else throws `BETTER_AUTH_URL must be an exact HTTP or HTTPS origin.`
+
+Every extra origin in `RECEIPT_LEGACY_PUBLIC_ORIGINS` is held to a stricter rule: each must be an absolute **HTTPS** origin with no credentials, no wildcard host, and no path, query or fragment. An invalid entry throws `Invalid RECEIPT_LEGACY_PUBLIC_ORIGINS: <reason>.`
+
+`VITE_BETTER_AUTH_URL` is the browser-side counterpart and is inlined at build time. It must share `BETTER_AUTH_URL`'s origin. A mismatch does not fail loudly — sign-in breaks with CORS errors.
+
+### `ZERO_UPSTREAM_DB` — one name, no aliases
+
+`ZERO_UPSTREAM_DB` is the single canonical Postgres URL for the app, the Receipt runtime, the sync layer and every script. The resolver deliberately accepts no aliases, and the reason is recorded in the code: accepting multiple aliases made the application and the Receipt runtime paths capable of silently pointing at different databases.
+
+Other in-repo documents name `RECEIPT_POSTGRES_URL` as though it were an alternative. Production code does not read it.
+
+When the app opens its pool, an `sslmode` of `prefer`, `require` or `verify-ca` in the connection string is rewritten to `verify-full` unless the string also carries `uselibpqcompat=true`. The rewrite keeps certificate and hostname verification through a `pg-connection-string` upgrade that would otherwise relax those modes.
+
+## Where values come from
+
+Both stack launchers — the day-to-day dev command and the production-like supervisor — load the same four files in the same order: `.env` and `.env.local` at the repository root, then `apps/start/.env` and `apps/start/.env.local`. In both, **a value already exported in your shell always wins**, because the loader skips any key that is already set. That single rule explains most "I changed the file and nothing happened" reports.
+
+Not every entry point uses that list. The database scripts read only `apps/start/.env.local` and then `apps/start/.env`; the in-repo CLI reads the four plus the env file the local wrapper generates.
+
+Two templates ship with the repository: `apps/start/.env.example` for cloud and development, and `apps/start/.env.self-host.example` for self-hosted installs. Neither is a complete list of what the code reads, and both carry names nothing reads at all — see [Variables that look like configuration but are not](#variables-that-look-like-configuration-but-are-not).
+
+<Note>
+The build runs Turbo in strict environment mode. Only seven names are cache keys — `NODE_ENV`, `VITE_APP_INSTANCE_MODE`, `VITE_BETTER_AUTH_URL`, `VITE_SELF_HOST_SOURCE`, `VITE_ZERO_CACHE_URL`, `VITE_ENABLE_ORGANIZATION_PROVIDER_KEYS` and `VITE_DISABLE_REDIS`. Any other variable a build step needs has to be in the pass-through list, or it will not reach the build at all.
+</Note>
+
+## Encryption keys and shared secrets
+
+| Variable | What it protects |
+|---|---|
+| `BYOK_ENCRYPTION_KEY_B64` | AES-256-GCM wrapping key for organization provider API keys in `org_provider_api_key` |
+| `RECEIPT_CONNECTION_ENCRYPTION_KEY_B64` | AES-256-GCM key for the Receipt Connect connection secrets in `org_connection_secret` |
+| `RECEIPT_CONNECT_JWT_SECRET` | Shared HS256 secret so Receipt Connect JWTs minted by the web app verify in the runtime |
+| `RECEIPT_INTEGRATIONS_WEBHOOK_SECRET` | HMAC secret for webhooks from the integration provider back to Receipt |
+
+`BYOK_ENCRYPTION_KEY_B64` and `RECEIPT_CONNECTION_ENCRYPTION_KEY_B64` are the two AES keys, and each must decode to exactly 32 bytes. Generate each one separately:
+
+```bash
+openssl rand -base64 32
+```
+
+The other two are shared secrets rather than AES keys: what matters is that the value is long, random, and identical on both sides. The repository's deploy secrets generator produces 48 random bytes, base64url, for each. `RECEIPT_CONNECT_JWT_SECRET` must be the same value in the web app and the runtime, and `RECEIPT_INTEGRATIONS_WEBHOOK_SECRET` must match the HMAC key registered at the integration provider — the provider signs each webhook with it and Receipt verifies against it.
+
+Both AES keys use a 12-byte IV and key version 1. `BYOK_ENCRYPTION_KEY_B64` reports its own problems precisely:
+
+- `Missing required environment variable BYOK_ENCRYPTION_KEY_B64.`
+- `BYOK_ENCRYPTION_KEY_B64 must be valid base64.`
+- `BYOK_ENCRYPTION_KEY_B64 must decode to exactly 32 bytes.`
+- `Unsupported BYOK key version: {n}` when decrypting a row written under a different key version.
+
+`RECEIPT_CONNECTION_ENCRYPTION_KEY_B64` must likewise decode to exactly 32 bytes, and a version mismatch throws `Unsupported Receipt Connect connection key version: <n>`.
+
+A stored provider key is never logged in full. What appears in logs and telemetry is a fingerprint: the first twelve hex characters of its SHA-256.
+
+<Note>
+The repository's local supervisor scripts fill in fallbacks when these are unset: `RECEIPT_CONNECTION_ENCRYPTION_KEY_B64` falls back to `BYOK_ENCRYPTION_KEY_B64`, and `RECEIPT_CONNECT_JWT_SECRET` falls back to `BETTER_AUTH_SECRET`. That is a local-development convenience. The deploy secrets bundle lists both as required values in their own right. The two AES `_B64` keys are additionally validated to decode to exactly 32 bytes before upload, and anything else is refused with `<name> must be a base64-encoded 32 byte key.`
+</Note>
+
+<Warning>
+**Rotating either AES key destroys the data it protects. There is no way back.**
+
+There is no re-encryption routine anywhere in the codebase, and decryption hard-fails on any other key version. Rotating `BYOK_ENCRYPTION_KEY_B64` after organizations have saved provider keys makes every stored key permanently undecryptable — the only recovery is for each organization to re-enter its keys by hand. Rotating `RECEIPT_CONNECTION_ENCRYPTION_KEY_B64` after connections exist does the same to every stored Receipt Connect connection secret.
+
+Generate both keys once, before the first user saves anything, and store them where you will not lose them.
+</Warning>
+
+## Paying for model calls
+
+Every model call Receipt itself makes passes one policy and credential checkpoint, described in [the LLM Gateway](/llm-gateway/overview). Which credential pays is a configuration decision.
+
+Normally it is the organization's own: provider keys are added through the app, encrypted with `BYOK_ENCRYPTION_KEY_B64`, and stored per organization. See [Bring your own key](/llm-gateway/bring-your-own-key).
+
+When an organization has no key of its own, the request is funded by the deployment, using a single server-owned OpenAI credential in `OPENAI_API_KEY`.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `OPENAI_API_KEY` | none | The server-side key that pays for every request no organization key covers. Not declared in either environment template. |
+| `CHAT_REQUIRE_BYOK` | `false` | `true` makes a workspace-managed provider key mandatory: a request without one is refused with 403 instead of falling back to platform funding. |
+| `ALLOW_USER_COST_DISPLAY` | `false` | Shows AI cost to end users. Requests that used an organization key always show cost regardless. |
+| `FREE_CHAT_RATE_LIMIT_WINDOW_MS` / `_MAX_REQUESTS` | `60000` / `10` | Per-user chat request limit on the free plan |
+| `PAID_CHAT_RATE_LIMIT_WINDOW_MS` / `_MAX_REQUESTS` | `60000` / `30` | Per-user chat request limit on a paid plan |
+| `FREE_CHAT_ALLOWANCE_WINDOW_MS` / `_MAX_REQUESTS` | `86400000` / `100` | Free-plan daily allowance |
+
+Set any of the six limit variables to something that is not a positive integer and the chat request fails with `Expected {NAME} to be a positive integer` — the value is read per request, not at boot. There are no token budgets, only request counts and the dollar-denominated budgets described in [Usage and spend](/llm-gateway/usage-and-spend).
+
+<Warning>
+**Without `OPENAI_API_KEY`, chat fails for every organization that has not brought its own key.** The gateway answers `Platform-funded OpenAI access is unavailable: OPENAI_API_KEY is not configured.`, and background runs fail with `Platform-funded OpenAI access is authorized, but OPENAI_API_KEY is unavailable.` A model the deployment key cannot route also fails, with `Selected model does not support platform OpenAI routing: <id>`.
+
+Because the variable is in neither template, this is the single most common configuration gap on a fresh install.
+</Warning>
+
+<Warning>
+`VITE_DISABLE_REDIS=true` turns the rate limiter off entirely — see [Redis](#redis) below. The template ships that value.
+</Warning>
+
+## Seats on the free plan
+
+`RECEIPT_DEFAULT_FREE_SEAT_COUNT` sets how many people may use a workspace on the free plan before a paid subscription's own seat count takes over. Unset — or set to anything that is not a positive integer — it is `5`. Raise it when you are running a pilot that needs more seats before billing is set up.
+
+A self-hosted build ignores it. Every organization created on a self-hosted instance gets the `self_hosted` plan and a subscription seat count of 100,000, and the capacity check reads that subscription, so the variable never applies.
+
+Adding a member past the ceiling is refused with 403 and the message `Only {n} users can access this workspace.` [Members and roles](/core/members-and-roles) covers the invitation flow, and [Billing and plans](/core/billing-and-plans) covers what a paid plan changes.
+
+## Object storage
+
+`UPLOAD_STORAGE_PROVIDER` selects the backend and defaults to `cloudflare_r2`. It accepts `cloudflare_r2` or `r2`, and `s3`, `s3_compatible`, `railway_s3` or `railway`. Anything else throws:
+
+```
+Unsupported UPLOAD_STORAGE_PROVIDER value: {v}. Use cloudflare_r2 or s3_compatible.
+```
+
+<CodeGroup>
+```bash Cloudflare R2
+R2_ACCOUNT_ID=
+R2_ACCESS_KEY_ID=
+R2_SECRET_ACCESS_KEY=
+R2_BUCKET_NAME=
+R2_PUBLIC_BASE_URL=
+```
+
+```bash S3-compatible
+S3_ENDPOINT=
+S3_ACCESS_KEY_ID=
+S3_SECRET_ACCESS_KEY=
+S3_BUCKET_NAME=
+S3_REGION=
+S3_PUBLIC_BASE_URL=
+```
+</CodeGroup>
+
+Miss one and the configuration throws with the list of what is absent: `Cloudflare R2 upload requires env variables: missing {list}`, or `S3-compatible upload requires env variables: missing {list}`. There is no graceful degradation for uploads — with no storage configured, the upload route answers 500 carrying that same message.
+
+For R2 the endpoint is derived from the account id and the region is `auto`. For S3-compatible storage, `S3_REGION` defaults to `auto`, unprefixed aliases (`ENDPOINT`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY`, `BUCKET`, `REGION`) are accepted, and setting `S3_AUTH_MODE=aws_default` or `S3_USE_IAM_ROLE=1` switches from static keys to the ambient credential chain.
+
+### The signed object proxy
+
+`S3_PUBLIC_BASE_URL` defaults to `{BETTER_AUTH_URL}/api/files/object` — Receipt's own first-party proxy for private buckets. When the public base URL ends in that path, returned URLs are signed: `{publicBaseUrl}?key=<key>&sig=<hmac>`, where the signature is an HMAC-SHA256 of the object key using `BETTER_AUTH_SECRET`. Without that secret, the service throws `BETTER_AUTH_SECRET is required to generate signed proxy file URLs`.
+
+The proxy rejects a bad key with `{"error":"Invalid storage key"}` (400) and a bad signature with `{"error":"Invalid file signature"}` (403).
+
+## Optional subsystems, and exactly what you lose
+
+### Redis
+
+`REDIS_URL` powers chat stream resume and rate limiting. Without it the stream-resume layer throws `REDIS_URL is not configured`.
+
+<Warning>
+`VITE_DISABLE_REDIS=true` swaps in disabled layers for **both** stream resume and rate limiting. Stream resume always returns nothing, so `GET /api/chat` always answers 204 and a page reload during generation shows no live stream — the answer still lands through the synced projection. Less obviously, **rate limiting is turned off entirely**: the check always returns allowed. The in-repo local setup guide describes this flag as merely using an in-memory stream-resume fallback. It does not.
+</Warning>
+
+### Embeddings and the vector store
+
+`VITE_ENABLE_EMBEDDING` **defaults to `true`** when unset. So a vector store is required unless you explicitly turn embeddings off.
+
+- To run embeddings: set `QDRANT_URL` and, if your instance needs it, `QDRANT_API_KEY`. `QDRANT_COLLECTION_ATTACHMENTS` defaults to `attachment_chunks_v1`, `QDRANT_TIMEOUT_MS` to `5000`, `QDRANT_UPSERT_BATCH_SIZE` to `128`.
+- To run without one: set `VITE_ENABLE_EMBEDDING=false` at build time, which disables embeddings and vector retrieval globally.
+
+Leaving embeddings on with no vector store starts the stack but leaves attachment indexing and retrieval unavailable, with the warning: `VITE_ENABLE_EMBEDDING=true but QDRANT_URL is empty. The core stack will start, but attachment vector indexing/retrieval remains unavailable until Qdrant is configured.`
+
+### The markdown worker
+
+`CF_MARKDOWN_WORKER_URL` and `CF_MARKDOWN_WORKER_TOKEN` are both required for converting non-text files to markdown; the worker is considered available only when both are non-empty. `CF_MARKDOWN_WORKER_TIMEOUT_MS` defaults to `20000` (floor `1000`) and `CF_MARKDOWN_MAX_CHARS` to `120000` (floor `1000`).
+
+Without it, conversion answers 503 with `Markdown conversion is disabled because CF_MARKDOWN_WORKER_URL or CF_MARKDOWN_WORKER_TOKEN is missing.`, and the upload route refuses any chat attachment that is not directly text-extractable with a 400:
+
+> `This self-hosted instance only accepts direct text attachments until the markdown worker is configured.`
+
+The message names a self-hosted instance, but the check is on the two worker variables alone. A cloud deployment that has not set them refuses attachments the same way and shows the same wording.
+
+### Outbound email
+
+`AUTH_EMAIL_PROVIDER` is one of `disabled`, `resend`, `ses` or `smtp`. Unset, it is auto-detected: `resend` when `RESEND_API_KEY` is present, else `ses` when any one of `SES_FROM_EMAIL`, `AUTH_EMAIL_FROM` or an SST-provided sender identity is present, else `disabled`.
+
+| Transport | Variables |
+|---|---|
+| `resend` | `RESEND_API_KEY`, `RESEND_FROM_EMAIL` |
+| `ses` | `SES_REGION` (falls back to `AWS_REGION`), `SES_FROM_EMAIL`, `SES_CONFIGURATION_SET` |
+| `smtp` | `SMTP_HOST`, `SMTP_PORT` (default `587`), `SMTP_SECURE` (default `false`), `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM_EMAIL` |
+
+`AUTH_EMAIL_FROM` is the generic fallback from-address for all three.
+
+Receipt does not operate an email service. Every transport sends through an account you own, and needs a sender identity verified in that account. The repository's AWS deploy path enforces this for the `production` stage: its auth-email guard requires `AUTH_EMAIL_PROVIDER=ses` and `VITE_DISABLE_EMAIL_VERIFICATION_OTP=false`, and checks both SES production access and a verified identity before it will deploy — so a SES account still in the provider's sandbox fails the guard.
+
+On a self-hosted instance, organization invitations always produce copyable signup links in the invite dialog rather than sending mail. That is keyed to the self-hosted build, not to which email transport you configured.
+
+## Runtime knobs that are actually read
+
+These are read by the Receipt runtime. Defaults are the values in code when the variable is unset.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `RECEIPT_PROCESS_ROLE` | unset — defaults to `api` | Restricts a process to one of `api`, `driver`, `worker-control`, `worker-chat`, `worker-codex`. A value that is not one of those five resolves to `all`, which falls back to the `api` task group and registers no functions. |
+| `PORT` | `8787` | Runtime HTTP listen port |
+| `RESONATE_URL` | `http://127.0.0.1:8001` | Durable-execution broker URL |
+| `RESONATE_GROUP_API` / `_DRIVER` / `_CHAT` / `_CONTROL` / `_CODEX` | `receipt-api`, `receipt-driver`, `receipt-chat`, `receipt-control`, `receipt-codex` | Worker group names |
+| `JOB_LEASE_MS` | `300000` | Default job lease duration |
+| `CODEX_JOB_LEASE_MS` | `900000` | Lease for codex and computer-path monitor jobs |
+| `FACTORY_CONTROL_JOB_LEASE_MS` | `900000` | Lease for factory-control jobs |
+| `CHAT_JOB_CONCURRENCY` / `ORCHESTRATION_JOB_CONCURRENCY` / `CODEX_JOB_CONCURRENCY` | `4` / `1` / `1` | Per-lane concurrency |
+| `RECEIPT_RESONATE_QUEUED_REDRIVE_INTERVAL_MS` / `_MIN_AGE_MS` / `_COOLDOWN_MS` / `_STARTUP_DELAY_MS` | `15000` / `30000` / `15000` / `5000` | Queued-job redrive timing |
+| `RECEIPT_OBJECTIVE_CONTROL_OUTBOX_REDRIVE_INTERVAL_MS` / `_TIMEOUT_MS` | `5000` / `15000` | Objective control outbox redrive |
+| `RECEIPT_RESONATE_ACTIVE_STALE_MS` | `600000` | When an active job counts as stale |
+| `RECEIPT_PROJECTION_SYNC_LATENCY_LOG_THRESHOLD_MS` | `250` | Projection latency log threshold |
+| `RECEIPT_PROJECTION_RERUN_BASE_DELAY_MS` | `250` (minimum `25`) | Projection rerun base delay |
+| `RECEIPT_PROJECTION_RERUN_MAX_NOOP_DELAY_MS` | `4000` | Projection rerun ceiling after no-op runs |
+| `RECEIPT_POSTGRES_POOL_MAX` | `2` in code; the role supervisor exports `1` | Postgres pool size per process |
+| `OPENAI_MODEL` | set in code — see below | Default model for generic text and structured calls |
+| `RECEIPT_FACTORY_TASK_MODEL` | set in code — see below | Model for Factory task workers |
+| `RECEIPT_FACTORY_OBJECTIVE_SUPERVISOR_MODEL` | set in code — see below | Objective supervisor model |
+| `OPENAI_MAX_RETRIES` / `OPENAI_RETRY_BASE_MS` | `3` / `500` | Rate-limit retry behaviour |
+
+The three model variables each fall back to a model identifier carried in code, and the Factory task and objective-supervisor models are set separately from `OPENAI_MODEL`. Those identifiers are not reproduced here — set each variable explicitly to the model you intend to run.
+
+## Pointing the CLI at your own deployment
+
+Released `receipt` binaries have the hosted origin `app.kentron.ai` compiled in, so nothing here is needed to use the hosted app — see [Sign in](/cli/setup). Two variables exist for the CLI's `local` target, and matter when you point it at a development stack or a self-hosted install:
+
+| Variable | Default |
+|---|---|
+| `RECEIPT_CONNECT_LOCAL_SERVER_URL` | the Receipt Connect gateway, which is the runtime API port. Falls back in turn to `RECEIPT_CONNECT_GATEWAY_URL`, `RECEIPT_PROXY_SERVER_URL`, then loopback on `RECEIPT_PORT`, `PORT` or `8787` |
+| `RECEIPT_CONNECT_LOCAL_AUTH_URL` | the web origin the browser uses; falls back in turn to `RECEIPT_AUTH_URL`, `BETTER_AUTH_URL`, `VITE_BETTER_AUTH_URL`, then loopback on `WEB_PORT` or `3000` |
+
+The full set, including the session file layout and precedence between flags, environment and saved session, is in [Environment and exit codes](/cli/environment-and-exit-codes).
+
+## Variables that look like configuration but are not
+
+Every name below appears in an environment template, in the build configuration, in a deploy configuration, or in the repository's own API config document — and is read by no code that runs. Setting them changes nothing.
+
+**In `apps/start/.env.example`, with no reader anywhere:**
+
+`ANTHROPIC_API_KEY` (referenced only by test stubs), `AI_GATEWAY_API_KEY` (production code only *removes* it from projected sandbox environments), `AUTH_DEV_EMAIL_OTP_TO_CONSOLE` (there are no console OTPs), `RECEIPT_POSTGRES_MIRROR_URL`, `SLACK_PRIMARY_TEAM_ID`, `SLACK_PRIMARY_RECEIPT_ORG_ID`, `SLACK_ALLOWED_TEAM_IDS`, `STRIPE_PRODUCT_ENTERPRISE`, `VITE_STRIPE_PUBLISHABLE_KEY`.
+
+<Warning>
+**`AI_GATEWAY_API_KEY` and `ANTHROPIC_API_KEY` sit in the template under a heading marked required, and neither does anything.** The template's comment above them reads:
+
+> Hosted requests without a workspace BYOK key use AI Gateway and consume the workspace's platform-credit balance. Workspace BYOK keys take precedence.
+
+That is no longer how the product works. Requests not covered by an organization key go directly to OpenAI with `OPENAI_API_KEY`, which the template does not mention at all. Never install an OpenAI key as `AI_GATEWAY_API_KEY` — it will be ignored, and the deployment will behave as though it has no funding key.
+</Warning>
+
+`SLACK_BOT_TOKEN` is a near miss: the deploy configurations inject it into containers, but no application code reads it.
+
+**In the build configuration, with no reader:**
+
+`VITE_ENABLE_ORGANIZATION_PROVIDER_KEYS` is listed in `turbo.json` and set by CI and the image builds, but no application code reads it. `ENABLE_EMBEDDING` is declared in the Vite environment types and passed through Turbo, but no runtime code reads the unprefixed name — only `VITE_ENABLE_EMBEDDING` has an effect.
+
+Turbo's pass-through list also still carries a block of variables inherited from an upstream template that this codebase never reads: `WORKOS_*`, `AUTUMN_*`, `VALYU_API_KEY`, `SUPERMEMORY_API_KEY`, `KV_REST_API_*`, `NEXT_PUBLIC_*`, `DUB_API_KEY`, `ADMIN_EMAILS`, `XAI_API_KEY`, `MISTRAL_API_KEY`, `MOONSHOTAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`.
+
+**In the in-repo API config document, with no reader:**
+
+`JOB_POLL_MS`, `JOB_CONCURRENCY`, `JOB_LEASE_GRACE_MS`, `PLANNER_STEP_TIMEOUT_MS`, `IMPROVEMENT_VALIDATE_CMD` and `IMPROVEMENT_HARNESS_CMD`. That document also states `JOB_LEASE_MS` defaults to `30000`; the code default is `300000`.
+
+`JOB_BACKEND` is a second near miss: the AWS deploy configurations set it to `resonate`, and no code reads it.
+
+## Full reference, by area
+
+The sections above cover the variables that stop the product working. This appendix lists the remainder, grouped by the process that reads them. A blank default means the variable is unset in code.
+
+<AccordionGroup>
+
+<Accordion title="Identity, sessions, and cookies">
+
+| Variable | Default | Effect |
+|---|---|---|
+| `BETTER_AUTH_COOKIE_DOMAIN` | | Cookie domain for cross-subdomain sessions |
+| `BETTER_AUTH_USE_SECURE_COOKIES` | derived from the URL scheme | `true`/`1` or `false`/`0` overrides that derivation |
+| `RECEIPT_LEGACY_PUBLIC_ORIGINS` | | Extra trusted HTTPS origins, comma-separated |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | | Google OAuth credentials. No sign-in button renders for them in this release. |
+| `SELF_HOSTED_SETUP_TOKEN` | | The first-admin claim token for a self-hosted install — see [Self-hosting](/core/self-hosting) |
+| `ADMIN_EMAIL_ALLOWLIST` | | Narrows who may read the internal admin metrics route |
+| `VITE_REQUIRE_SIGNUP_EMAIL_OTP` | unset | `1`/`true` re-enables sign-up email OTP in development |
+| `VITE_DISABLE_EMAIL_VERIFICATION_OTP` | unset | `1`/`true` at build time removes OTP from a production bundle |
+| `VITE_APP_INSTANCE_MODE` | `cloud` | `self_hosted` switches on the self-hosted behaviour set |
+| `VITE_SELF_HOST_SOURCE` | empty | Distribution label; changes some setup copy |
+
+</Accordion>
+
+<Accordion title="Database, sync, and replication">
+
+| Variable | Default | Effect |
+|---|---|---|
+| `VITE_ZERO_CACHE_URL` | `http://localhost:4848` | Browser-to-sync-service URL, inlined at build time |
+| `ZERO_APP_ID` | `receipt` | Sync namespace |
+| `ZERO_APP_PUBLICATIONS` | `zero_data` | Publications the sync service follows |
+| `ZERO_QUERY_URL`, `ZERO_MUTATE_URL` | derived from the gateway port | Transform endpoints |
+| `ZERO_QUERY_FORWARD_COOKIES`, `ZERO_MUTATE_FORWARD_COOKIES` | `true` in the template and in the deploy entrypoint | Forward browser cookies to the transform endpoints |
+| `ZERO_QUERY_ALLOWED_CLIENT_HEADERS`, `ZERO_MUTATE_ALLOWED_CLIENT_HEADERS` | template and deploy set `x-receipt-zero-token,authorization` | Headers allowed through. The AWS deploy preflight rejects any other value. |
+| `ZERO_REPLICA_FILE` | `apps/start/zero.db` for the repository's reset scripts | Local SQLite replica path |
+| `ZERO_PUBLICATION_EXTRA_TABLES` | | Comma-separated tables appended to `zero_data` |
+| `RECEIPT_POSTGRES_SCHEMA` | `public` under the supervisors; otherwise a schema derived from the data directory | Schema holding the receipt projections |
+| `RECEIPT_POSTGRES_APPLICATION_NAME` | | Connection label in Postgres |
+| `RECEIPT_FORCE_SCHEMA_MIGRATION` | | Forces the durable-schema migration to run |
+| `DATABASE_URL`, `DATABASE_PUBLIC_URL` | | Accepted by the migration script, the setup health check and a pair of maintenance scripts. Never by the app pool or the runtime. |
+
+[Database and migrations](/core/database-and-migrations) covers the publication itself, which is the part that silently breaks sync when a table is missing from it.
+
+</Accordion>
+
+<Accordion title="Receipt Connect and the CLI">
+
+| Variable | Effect |
+|---|---|
+| `RECEIPT_CONNECT_PROD_URL`, `RECEIPT_CONNECT_DEV_URL` | Override the `prod` and `dev` CLI targets |
+| `RECEIPT_CONNECT_PROD_GATEWAY_URL`, `RECEIPT_CONNECT_PROD_SERVER_URL`, `RECEIPT_CONNECT_PUBLIC_GATEWAY_URL`, `RECEIPT_CONNECT_PUBLIC_URL`, `RECEIPT_CONNECT_URL` | Further hosted-origin overrides |
+| `RECEIPT_CONNECT_GATEWAY_URL`, `RECEIPT_CONNECT_SERVER_URL`, `RECEIPT_CONNECT_GATEWAY_HOSTPORT` | Gateway resolution inside the stack |
+| `RECEIPT_CONNECT_WORKER_GATEWAY_URL`, `RECEIPT_CONNECT_CONTROLLER_GATEWAY_URL`, `RECEIPT_CONNECT_ENFORCE_PUBLIC_WORKER_GATEWAY` | The gateway address sandboxed workers and the controller use |
+| `RECEIPT_CONNECT_TOKEN`, `RECEIPT_CONNECT_USER_ID`, `RECEIPT_CONNECT_ORGANIZATION_ID`, `RECEIPT_CONNECT_WORKSPACE_ID`, `RECEIPT_CONNECT_WORKSPACE_NAME` | An identity supplied by the environment. It wins over a saved CLI session. |
+| `RECEIPT_CONNECT_OPEN_BROWSER` | `0` prints the sign-in URL instead of opening a browser |
+| `RECEIPT_CLI_CONFIG_DIR`, `RECEIPT_CLI_SESSION_FILE`, `RECEIPT_CLI_VERSION`, `RECEIPT_CLI_NO_FORCE_EXIT`, `RECEIPT_CLI_LOAD_LOCAL_ENV` | CLI state and behaviour |
+
+</Accordion>
+
+<Accordion title="Model access, billing, and analytics">
+
+| Variable | Default | Effect |
+|---|---|---|
+| `OPENAI_BASE_URL`, `OPENAI_API_BASE` | | Redirect the agent's OpenAI traffic to another endpoint, including the offline mock proxy |
+| `MOCK_OPENAI_API_KEY` | `mock-openai-key` | Stand-in key, supplied only when `OPENAI_BASE_URL` is a loopback address, so the mock path cannot degrade into process-wide credentials |
+| `OPENAI_TIMEOUT_MS`, `OPENAI_STRUCTURED_TIMEOUT_MS`, `RECEIPT_STRUCTURED_TIMEOUT_MS` | | Request timeouts |
+| `OPENAI_ORGANIZATION`, `OPENAI_ORG_ID`, `OPENAI_PROJECT` | | Passed to the OpenAI client |
+| `RECEIPT_FACTORY_CHAT_MODEL`, `RECEIPT_FACTORY_SUPERVISOR_MODEL`, `RECEIPT_FACTORY_PLATFORM_CODEX_MODEL`, `RECEIPT_FACTORY_PLATFORM_SUPERVISOR_MODEL` | in code | Further Factory model selection |
+| `CHAT_TITLE_GENERATION_MODEL` | in code | Model used to name a conversation. The template's comment claiming it follows the thread model is stale. |
+| `CHAT_RECEIPT_RECAP_MODEL`, `RECEIPT_CHAT_CHAIN_TIMEOUT_MS`, `RECEIPT_APP_CHAT_PROFILE_ID`, `RECEIPT_FACTORY_CHAT_PROFILE_ID` | | Chat tuning |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | | Both required to enable billing; cloud builds only |
+| `STRIPE_PRICE_PLUS_MONTHLY`, `STRIPE_PRICE_PRO_MONTHLY`, `STRIPE_PRICE_SCALE_MONTHLY` | | Price ids per plan |
+| `WORKSPACE_USAGE_TARGET_MARGIN_PERCENT` and its per-plan variants | | Metered-credit margins. Building a paid usage policy without them throws `Missing <name>`. |
+| `POSTHOG_PROJECT_API_KEY`, `POSTHOG_HOST` | host `https://us.i.posthog.com` | Error and analytics drain. The key is ignored on self-hosted builds. |
+| `POSTHOG_PROJECT_ID`, `POSTHOG_PERSONAL_API_KEY` | | Source-map upload. The helper is not wired into the build. |
+| `EFFECT_SERVICE_NAME`, `EFFECT_SERVICE_VERSION`, `EFFECT_MIN_LOG_LEVEL`, `EFFECT_LOG_FORMAT`, `EFFECT_OTLP_BASE_URL`, `EFFECT_OTLP_HEADERS_JSON` | `receipt`, `0.0.0`, `Warn`, `json` in production | Logging and optional OTLP export, web app only |
+
+[Health and observability](/core/health-and-observability) covers what these emit.
+
+</Accordion>
+
+<Accordion title="Runtime, jobs, and the sandbox">
+
+| Variable | Default | Effect |
+|---|---|---|
+| `RECEIPT_PORT` | `PORT`, then `8787` | The port the runtime advertises for callbacks |
+| `DATA_DIR`, `RECEIPT_DATA_DIR` | `.receipt/data` in the repository | Runtime data root |
+| `RECEIPT_PROCESS_INSTANCE`, `JOB_WORKER_ID`, `RECEIPT_WORKER_HOST_ID` | derived | Worker identity |
+| `CONTROL_WORKER_PROCESSES`, `CHAT_WORKER_PROCESSES`, `CODEX_WORKER_PROCESSES` | `1`, `2`, then `OPEN_SANDBOX_GLOBAL_MAX_ACTIVE`, `OPEN_SANDBOX_ORG_MAX_ACTIVE` or `1` | How many processes each role starts |
+| `RESONATE_PORT`, `RESONATE_METRICS_PORT`, `RESONATE_BIND`, `RESONATE_BIN`, `RESONATE_DATA_DIR`, `RESONATE_START_SERVER`, `RESONATE_TOKEN` | broker on `8001`, metrics on `9090` | The durable-promise broker. It is started automatically when its URL is loopback. |
+| `RECEIPT_RESONATE_CALLBACK_URL`, `RECEIPT_EVENT_CALLBACK_URL` | `http://127.0.0.1:<runtime port>/receipt/callback` | Where completed work reports back |
+| `FACTORY_CONTROL_JOB_EXECUTION_TIMEOUT_MS` | in code | Factory control job timeout |
+| `RECEIPT_CODEX_BIN`, `CODEX_HOME`, `RECEIPT_CODEX_TIMEOUT_MS`, `RECEIPT_CODEX_STARTUP_TIMEOUT_MS`, `RECEIPT_CODEX_STALL_TIMEOUT_MS` | bundled binary if present, else `codex` | The agent executable and its timeouts |
+| `RECEIPT_FACTORY_EXECUTION_PATH`, `RECEIPT_FACTORY_COMPUTER_PROVIDER`, `RECEIPT_FACTORY_COMPUTER_ENABLED` | `computer`, `opensandbox` | The execution path. There is no non-sandboxed alternative. |
+| `OPEN_SANDBOX_DOMAIN`, `OPEN_SANDBOX_PROTOCOL` | `localhost:8080`, `http` | Sandbox controller address |
+| `OPEN_SANDBOX_CPU`, `OPEN_SANDBOX_MEMORY` | `2`, `4Gi` | Size of each sandbox |
+| `OPEN_SANDBOX_READY_TIMEOUT_SECONDS`, `OPEN_SANDBOX_REQUEST_TIMEOUT_SECONDS`, `OPEN_SANDBOX_TIMEOUT_SECONDS` | `120`, `120`, `3600` | Sandbox lifecycle timeouts |
+| `OPEN_SANDBOX_GLOBAL_MAX_ACTIVE`, `OPEN_SANDBOX_ORG_MAX_ACTIVE`, `OPEN_SANDBOX_ORG_<ORG_ID>_MAX_ACTIVE` | `1` / `1` in code; the AWS deploy raises the global cap to `3` | How many sandboxes may run at once, overall and per organization |
+| `OPEN_SANDBOX_CLEANUP_ON_FINISH`, `OPEN_SANDBOX_AUTO_START`, `OPEN_SANDBOX_AUTO_STOP` | | Controller lifecycle |
+| `OPEN_SANDBOX_SECURE_ACCESS`, `OPEN_SANDBOX_API_KEY`, `OPEN_SANDBOX_USE_SERVER_PROXY` | | Controller authentication. The local controller runs unauthenticated; keep it on loopback. |
+| `RECEIPT_FACTORY_REPO_SLOT_CONCURRENCY` | `20` | How many objectives may hold an active repository slot at once. The runtime service and the in-repo Factory CLI resolve it from the same code, so the default is the same for both. |
+| `RECEIPT_INTEGRATIONS_PROVIDER`, `RECEIPT_INTEGRATIONS_URL`, `RECEIPT_INTEGRATIONS_SECRET_KEY`, `RECEIPT_INTEGRATIONS_PUBLIC_URL`, `RECEIPT_INTEGRATIONS_DATABASE_URL` | provider `nango` | The integration provider — see [Running the integration provider](/core/integrations-provider) |
+| `RECEIPT_NANGO_<PROVIDER>_INTEGRATION_ID` | | One per connector, mapping a connector to its OAuth application |
+
+[The Factory engine](/core/factory-engine) explains what these lanes and leases do.
+
+</Accordion>
+
+<Accordion title="Routing between processes">
+
+The service gateway fronts every process behind one origin and routes by path prefix: `/runtime`, `/zero`, `/integrations`, `/integrations-connect`, `/connect`, `/slack`, `/teams`, `/resonate`, `/computer`. Everything else goes to the web app. The prefixes are the same locally and in a cloud deployment.
+
+Backend targets are `RECEIPT_WEB_INTERNAL_URL`, `RECEIPT_RUNTIME_INTERNAL_URL`, `RECEIPT_ZERO_INTERNAL_URL`, `RECEIPT_INTEGRATIONS_INTERNAL_URL`, `RECEIPT_INTEGRATIONS_CONNECT_INTERNAL_URL`, `RECEIPT_SLACK_INTERNAL_URL`, `RECEIPT_TEAMS_INTERNAL_URL`, `RECEIPT_RESONATE_INTERNAL_URL`, `RECEIPT_COMPUTER_INTERNAL_URL` and `RECEIPT_OPENSANDBOX_INTERNAL_URL`. Public origins are `RECEIPT_SERVICE_GATEWAY_URL`, `RECEIPT_SERVICE_RUNTIME_URL`, `RECEIPT_PROXY_SERVER_URL`, `RECEIPT_SERVER_URL`, `RECEIPT_RUNTIME_URL`, `RECEIPT_APP_URL`, `RECEIPT_WEB_URL` and `RECEIPT_PUBLIC_BASE_URL`.
+
+<Warning>
+`/runtime`, `/resonate` and `/computer` are private prefixes: unless the request arrives on the host name `localhost`, `127.0.0.1` or `::1`, the gateway answers `Not found` with 404.
+
+`RECEIPT_SERVICE_GATEWAY_EXPOSURE=private` or `RECEIPT_SERVICE_GATEWAY_ALLOW_PRIVATE=1` lifts that restriction. The value reads backwards until you know what it describes: it declares that the gateway itself is only reachable on a private network, so the private prefixes no longer need their own guard. The AWS deploy sets the exposure to `public` and keeps the guard on. Do not lift it on an internet-facing gateway.
+</Warning>
+
+</Accordion>
+
+<Accordion title="Slack and Teams">
+
+| App | Variables |
+|---|---|
+| Slack | `SLACK_SIGNING_SECRET`, `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_OAUTH_STATE_SECRET`, `SLACK_API_BASE_URL`, `SLACK_DEFAULT_PROFILE_ID`, `SLACK_PROGRESS_UPDATE_INTERVAL_MS`, `SLACK_MAX_PROGRESS_MESSAGES_PER_RUN`, `APP_URL`, `PORT` |
+| Teams | `CLIENT_ID`, `CLIENT_SECRET`, `TENANT_ID`, `TEAMS_DEFAULT_PROFILE_ID`, `PORT` |
+
+Both also read `BETTER_AUTH_URL`, `RECEIPT_WEB_URL` and `ZERO_UPSTREAM_DB`. See [Receipt in Slack](/co-worker/slack) and [Receipt in Teams](/co-worker/teams) for what each adapter can do.
+
+</Accordion>
+
+<Accordion title="Local supervisors and development helpers">
+
+These only affect the repository's own launchers, never a deployed build.
+
+- `START_ALL_*` configures the production-like supervisor: a port per service, plus `POSTGRES`, `LOCAL_INFRA`, `OPENSANDBOX`, `SLACK`, `TEAMS`, `MARKDOWN_WORKER` and `BUILD_WEB` switches, `WAIT_TIMEOUT_SECONDS`, `PUBLIC_GATEWAY_URL`, `ENV_FILE`/`ENV_FILES` and `LOG_ROOT`.
+- `LOCAL_UP_*` configures the wrapper around it: `DB_RESET` (`auto`, `1` or `0`; anything else fails with `Unsupported LOCAL_UP_DB_RESET='<x>'. Use auto, 1, or 0.`), `BUILD_WEB`, `ZERO_UPSTREAM_DB`, `PROVIDER` (`opensandbox`, with `computer` accepted as an alias for it; anything else fails with `Unknown provider '<x>'. Use opensandbox.`), `LOG_ROOT` and `RESET_INTEGRATIONS`.
+- The day-to-day dev command reads `PORT`, `RECEIPT_PORT` and `START_DEV_POSTGRES`.
+- The offline mock model proxy reads `RECEIPT_MOCK_LLM_PORT`, `RECEIPT_MOCK_LLM_HOST`, `RECEIPT_MOCK_LLM_TEXT`, `RECEIPT_MOCK_LLM_SCRIPT`, `RECEIPT_MOCK_LLM_FAILURES` and `RECEIPT_MOCK_LLM_TIMEOUT_MS`.
+- The local integration-provider container reads `LOCAL_NANGO_DATABASE_URL`, `LOCAL_NANGO_ENCRYPTION_KEY`, `LOCAL_NANGO_DASHBOARD_USERNAME` and `LOCAL_NANGO_DASHBOARD_PASSWORD`. The compose file ships development defaults for all four; change them before exposing that container to anything.
+
+[Local development](/core/local-development) puts these in the order you actually use them.
+
+</Accordion>
+
+</AccordionGroup>
+
+Deploy-time variables — stage and account selection, image references, instance sizes, task counts and the guard overrides — are read by the deploy scripts only and never by a running process. [Deploying](/core/deploying) covers the secrets bundle and the preflight checks that gate a production deploy.
+
+Next step: [Run the stack on your own machine](/core/local-development) walks through the prerequisites, the bring-up order and the three run modes.
