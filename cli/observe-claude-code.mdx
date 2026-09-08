@@ -32,17 +32,17 @@ Exactly two sources exist, and both work:
 
 For `clauden`, when the resolved companion binary is named `clauden` the default becomes the legacy text log `~/.claudeN/clauden.log`.
 
-For `claude-code`, Receipt scans `~/.claude/projects` and takes the newest `.jsonl` file by modification time. The stream project name comes from the parent directory, and the source id is the `.jsonl` basename, which is the session UUID.
+For `claude-code`, Receipt scans `~/.claude/projects` and takes the newest `.jsonl` file by modification time, falling back to `~/.claude/projects/latest.jsonl` when it finds none. The stream project name comes from the parent directory, and the source id is the `.jsonl` basename, which is the session UUID.
 
 <Note>
 `claude-code` appears in **no help text**. `receipt --help` and the usage strings list only `clauden`. The source is fully implemented and validated — it is simply reachable only by typing it.
 </Note>
 
-Omitting the source, or naming another one, fails:
+Omitting the source, or naming another one, fails with the same message either way:
 
 ```
 import source is required. Supported sources: clauden, claude-code
-Unknown import source 'codex'. Supported sources: clauden, claude-code
+observe source is required. Supported sources: clauden, claude-code
 ```
 
 ## Commands
@@ -63,21 +63,21 @@ receipt observe claude-code
 | `<path>`, `--event-log <path>`, `--path <path>` | per source, above | Read this file instead |
 | `--mode metadata\|full` | `metadata` | Capture mode. Anything else → `--mode must be metadata or full` |
 | `--stream <stream>` | `imports/<source>/<project>/<sourceId>` | Receipt stream to write to |
-| `--project <name>`, `--source-id <id>` | derived | Stream path segments, capped at 80 characters each |
-| `--import-id <id>` | generated | Identifier for this import run |
+| `--project <name>`, `--source-id <id>` | derived | Stream path segments, lower-cased to `[a-z0-9-]` and capped at 80 characters each |
+| `--import-id <id>` | `clauden_<base36 time>_<8 hex>` | Identifier for this import run |
 | `--max-lines <n>` | unlimited | Stop after this many lines |
 | `--follow` | off on `import`, always on for `observe` | Keep reading as the file grows |
 | `--poll-ms <n>` | `1000` | Follow poll interval, floored at 100 |
 | `--launch`, `--launch-proxy` | off | Spawn the companion proxy. Requires `--follow` or `observe` |
-| `--proxy-bin <path>`, `--clauden-bin <path>` | resolved | Companion binary override |
+| `--proxy-bin <path>`, `--clauden-bin <path>`, `--port <n>`, `--no-launch` | resolved | Companion binary and the arguments it is launched with |
 | `--batch-size <n>` | `50` | Receipts per upload request, maximum 100 |
 | `--local-only`, `--no-cloud`, `--no-upload` | off | Do not upload; keep receipts on this machine |
-| `--target <name>` | default session | Which saved CLI session to upload with |
-| `--json`, `--output-file <path>` | — | Result output |
+| `--target <name>` | active session | Which saved CLI session to upload with |
+| `--output-file <path>` | — | Write the result JSON to a file |
 
-`--launch` without `--follow` fails with `--launch requires --follow or receipt observe clauden`.
+`--launch` without `--follow` fails with `--launch requires --follow or receipt observe clauden`. Any other failure exits 1, like every other command in this CLI; see [Environment and exit codes](/cli/environment-and-exit-codes).
 
-Both commands always return JSON, honouring `--output-file`:
+Both commands always emit JSON, so `--json` does nothing here:
 
 ```json
 {
@@ -93,23 +93,30 @@ Both commands always return JSON, honouring `--output-file`:
 }
 ```
 
-Read `storage` to confirm where the receipts actually went.
+When receipts were uploaded, the envelope also carries `cloud` with the gateway URL and the organization id. Read `storage` to confirm where the receipts actually went.
+
+<Note>
+With `--output-file`, the result JSON goes to the file and stdout gets a pointer object instead — `ok`, the absolute `outputFile` and its `bytes`. Unlike `receipt tools` and `receipt mcp config`, `import` and `observe` write that file with a plain write at your default umask, not atomically and not at mode `0600`.
+</Note>
 
 ## Where receipts go
 
-The destination is chosen in this order:
+There are two destinations, and the CLI picks between them for you:
 
-1. A saved CLI session exists — receipts go to the hosted store, `storage: "cloud"`.
-2. Otherwise, if `ZERO_UPSTREAM_DB` is set, they go to Postgres, `storage: "postgres"`.
-3. Otherwise, a local file-backed store, `storage: "local"`.
+1. **A saved CLI session exists** — receipts go to the hosted store in your workspace, `storage: "cloud"`.
+2. **Otherwise** — receipts go to a file-backed store under `RECEIPT_DATA_DIR`, or `~/.receipt/data` when that is unset, `storage: "local"`.
 
-Any of `--local-only`, `--no-cloud` or `--no-upload` disables the cloud path.
+Any of `--local-only`, `--no-cloud` or `--no-upload` disables the cloud path, so a signed-in machine can still keep an import to itself.
+
+<Note>
+`ZERO_UPSTREAM_DB` is read on this path but has no effect. The released binary always forces the local store, so the third destination you may see referenced, `storage: "postgres"`, is unreachable from it — only the [developer CLI built from source](/cli/from-source/overview) can produce it.
+</Note>
 
 Uploads go to `<gatewayUrl>/api/receipt-ingest/receipts` with your session bearer token, which must carry `connect:write`. The endpoint caps a request at 2 MiB and 100 receipts, and accepts only the `imports/clauden/` and `imports/claude-code/` stream prefixes — a custom `--stream` outside those prefixes will be rejected.
 
 ## What is captured
 
-Each transcript line produces two receipts: the raw object and a normalized one. Duplicates are collapsed on a key built from the source, source id, object id and event type.
+Each transcript line produces two receipts: `import.raw_object.captured` for the raw object and `import.object.normalized` for the normalized one, or `import.object.rejected` when the line cannot be parsed. The run is bracketed by `import.batch.started` and `import.batch.completed`. Duplicates are collapsed on an event id built from the source, source id, object id and event type.
 
 The normalized receipt carries the model, stream, status, session key, request and response byte counts, rate-limit and cooldown state, method and path, `cwd`, `gitBranch`, entrypoint, user type, prompt and request ids, version, stop reason, any error, and a `timeline`.
 
@@ -143,17 +150,23 @@ Only macOS and Linux are supported. Anywhere else: `Background Claude observatio
 
 These are visible on your machine, so they are worth knowing exactly.
 
-On macOS, the launchd label is `run.beetle.clauden-observer`, at:
+<Tabs>
+<Tab title="macOS">
+The launchd label is `run.beetle.clauden-observer`, at:
 
 ```
 ~/Library/LaunchAgents/run.beetle.clauden-observer.plist
 ```
+</Tab>
 
-On Linux, the systemd user unit is `beetle-clauden-observer.service`, at:
+<Tab title="Linux">
+The systemd user unit is `beetle-clauden-observer.service`, at:
 
 ```
 ~/.config/systemd/user/beetle-clauden-observer.service
 ```
+</Tab>
+</Tabs>
 
 Logs are written to `<dataDir>/logs/clauden-observer.out.log` and `<dataDir>/logs/clauden-observer.err.log`, where the data directory is `RECEIPT_DATA_DIR` or `~/.receipt/data`.
 
@@ -163,8 +176,10 @@ The installed command is:
 <receipt> observe clauden --event-log <log> --mode <mode> --launch
 ```
 
+The service runs that command and nothing else, so it uploads to the cloud store whenever a saved session exists. `install` has no `--local-only`, and the flag would not survive into the installed command: if you do not want the service uploading, do not install it.
+
 <Note>
-The service label and unit filename use the string `beetle`, not `receipt`. Search for that string when you are looking for the service on disk.
+The service label and unit filename use the string `beetle`, not `receipt`; Beetle is the assistant's name in the interface. Search for that string when you are looking for the service on disk.
 </Note>
 
 ### `receipt setup` installs the observer
@@ -183,4 +198,4 @@ The CLI looks for the companion in order: `--proxy-bin`, `--clauden-bin`, `RECEI
 
 Imported runs appear at `/sessions`. That page is not in the sidebar — it is reachable by direct URL only. With nothing imported it reads `No imported sessions yet`.
 
-Next step: [find the pages that show your runs](/guides/monitoring-your-runs).
+Next step: [look up every command, flag and exit code](/cli/command-reference).

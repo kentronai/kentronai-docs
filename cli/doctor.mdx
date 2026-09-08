@@ -8,17 +8,19 @@ description: "How receipt doctor checks your endpoint, gateway, sign-in health, 
 It is also reachable as `receipt connect doctor` and `receipt connect check`. All three run the same read-only check.
 
 <Note>
-`doctor` never changes anything. It reads your session file and makes two HTTP probes. To actually sign in, use [`receipt setup`](/cli/setup).
+`doctor` never changes anything. It reads your session file and sends read-only `GET` probes to the gateway and the sign-in origin. To actually sign in, use [`receipt setup`](/cli/setup).
 </Note>
 
 ## What it checks
 
 A single `receipt doctor` run does four things:
 
-1. **Resolves the endpoint** — the gateway and sign-in origins for the target, from the baked-in hosted default (`https://app.kentron.ai`), a `--target`, a `--server-url`/`--auth-url` override, or the `RECEIPT_CONNECT_*` environment variables.
-2. **Probes the gateway** — a health request to `/health`, falling back to `/healthz`, and reports which path answered.
-3. **Probes sign-in** — a request to the auth origin's sign-in endpoint.
-4. **Reports the saved session** — the signed-in user and workspace, whether the token is expired and when it expires, or `not signed in`. The token itself is never shown.
+1. **Resolves the endpoint** — the gateway and sign-in origins for the target you ask for, which is `prod` unless you say otherwise. A `--server-url`/`--auth-url` override wins over the target; failing that the `RECEIPT_CONNECT_*` environment variables decide, and `prod` falls back to the hosted default `https://app.kentron.ai` that release builds carry. The full precedence is in [environment and exit codes](/cli/environment-and-exit-codes).
+2. **Probes the gateway** — a `GET` to `/health`. If that is not a 2xx it tries `/healthz`, and reports the fallback only when the fallback itself answers 2xx; otherwise the original `/health` result stands. The report names whichever path it used.
+3. **Probes sign-in** — a `GET` to the sign-in endpoint on the auth origin. Any HTTP status at all counts as reachable.
+4. **Reports the saved session** — the signed-in user and workspace, whether the token is expired and when it expires, or `not signed in`. It looks for the session saved for the target it is diagnosing, and falls back to the active session only when that session belongs to the same target — so `doctor --target local` reports your local sign-in even while `prod` is the active one. The token itself is never shown.
+
+Every probe is a plain `GET` with a ten-second timeout, and none of them follows redirects: a host that answers `/health` with a `301` or `302` reads as unhealthy rather than as reachable.
 
 ## Flags
 
@@ -26,12 +28,12 @@ A single `receipt doctor` run does four things:
 Print the machine-readable envelope instead of the text report.
 </ParamField>
 
-<ParamField path="--target" type="prod | dev | local" default="prod">
-Which environment to diagnose. `local` defaults to gateway `http://127.0.0.1:8787` and sign-in `http://127.0.0.1:3000`.
+<ParamField path="--target" type="prod | dev | local | http(s) URL" default="prod">
+Which environment to diagnose. `local` defaults to gateway `http://127.0.0.1:8787` and sign-in `http://127.0.0.1:3000`. Only the flag counts: a bare positional, as in `receipt doctor local`, is ignored and you get `prod`.
 </ParamField>
 
 <ParamField path="--server-url" type="url">
-Diagnose a specific Receipt Connect gateway, overriding the target.
+Diagnose a specific Receipt Connect gateway. It takes precedence over `--target` and makes the target `custom`.
 </ParamField>
 
 <ParamField path="--auth-url" type="url">
@@ -56,7 +58,7 @@ Next steps:
 The first line is `receipt doctor: ok` or `receipt doctor: attention needed`. Then the target, the gateway URL with its probe result and which health path answered, the sign-in URL with its probe result, the MCP URL (the gateway plus `/connect/mcp`), and the session line. A **Next steps** list follows only when there is something to do.
 
 <Note>
-The sign-in probe reports `HTTP 400`, and that is healthy. `doctor` sends a bare `GET` to the sign-in endpoint to check it is reachable; the endpoint answers `400` because the request carries no device code. `doctor` only cares that the origin answered.
+The sign-in probe reports `HTTP 400`, and that is healthy. `doctor` sends a bare `GET` to the sign-in endpoint to check it is reachable; the endpoint answers `400` with `user_code is required` because the probe carries no user code. `doctor` only cares that the origin answered.
 </Note>
 
 A signed-in machine with a healthy endpoint prints the session line and no next steps:
@@ -72,6 +74,20 @@ receipt doctor: ok
 
 When a session is present but past its 12-hour lifetime, the session line carries an `EXPIRED` marker and the expiry time instead of `expires …`.
 
+### The next-step lines
+
+Only the conditions that apply are printed, one per line, under `Next steps:`:
+
+| Line | When it appears |
+| --- | --- |
+| `Receipt gateway <url> did not answer a health check (<error or HTTP status>). Check RECEIPT_CONNECT_PUBLIC_GATEWAY_URL or --server-url.` | The health probe was not a 2xx |
+| `Receipt sign-in origin <url> is unreachable (<error>). Check --auth-url.` | The sign-in origin returned no HTTP response at all |
+| `Run 'receipt setup' to sign in.` | There is no saved session for this target |
+| `Saved session expired at <time>; run 'receipt setup' to sign in again.` | The saved token's expiry has passed |
+| `Saved session targets <saved gateway>, not <resolved gateway>; run 'receipt setup' for this target.` | The session belongs to another host |
+
+When the endpoint cannot be resolved at all there is no report — just one line and exit `1`, such as `receipt doctor: receipt connect dev URL is not configured. Set RECEIPT_CONNECT_DEV_GATEWAY_URL or RECEIPT_CONNECT_DEV_URL.` for `--target dev` on a machine with no dev host set.
+
 ## The JSON shape
 
 `receipt doctor --json` returns one envelope:
@@ -85,7 +101,7 @@ When a session is present but past its 12-hour lifetime, the session line carrie
   "mcpUrl": "https://app.kentron.ai/connect/mcp",
   "session": {
     "present": false,
-    "sessionFile": "/Users/you/.receipt/session.json"
+    "sessionFile": "~/.receipt/session.json"
   },
   "gateway": { "url": "https://app.kentron.ai/health", "status": 200 },
   "auth": { "url": "https://app.kentron.ai/api/receipt-connect/cli-login", "status": 400 },
@@ -101,12 +117,12 @@ When a session is present, `session` carries the details instead:
   "target": "prod",
   "gatewayUrl": "https://app.kentron.ai",
   "expired": false,
-  "expiresAt": "2026-09-07T22:14:05.000Z",
+  "sessionFile": "~/.receipt/session.json",
   "userEmail": "you@example.com",
-  "userId": "usr_…",
+  "userId": "<user id>",
   "workspaceId": "ws_…",
   "workspaceName": "Default",
-  "sessionFile": "/Users/you/.receipt/session.json"
+  "expiresAt": "2026-09-07T22:14:05.000Z"
 }
 ```
 
@@ -118,8 +134,8 @@ Each probe object is `{ url, status }` when the origin answered or `{ url, error
 
 | Exit | Meaning |
 | --- | --- |
-| `0` | Gateway and sign-in origins are reachable **and** either there is no saved session, or the session is not expired and its gateway matches the resolved target. |
-| `1` | An origin is unreachable, the session is expired, the session targets a different gateway, or the endpoint cannot be resolved. |
+| `0` | The gateway health probe answered 2xx, the sign-in origin answered with any status, **and** either there is no saved session, or the session is not expired and its gateway matches the resolved target. |
+| `1` | The gateway did not answer 2xx, the sign-in origin gave no HTTP response at all, the session is expired, the session targets a different gateway, or the endpoint cannot be resolved. |
 
 <Tip>
 In CI or a health script, run `receipt doctor --json` and branch on the exit code: `0` means the endpoint is reachable and any session is valid; `1` means act — usually re-run [`receipt setup`](/cli/setup).
@@ -132,19 +148,21 @@ Every fix below is a `receipt` command; `doctor` itself only reports.
 | Symptom | What `doctor` shows | Fix |
 | --- | --- | --- |
 | **Session expired** | Session line carries the `EXPIRED` marker; exit `1` | Run [`receipt setup`](/cli/setup) — it refuses an expired token and re-runs the browser login. Or `receipt setup --fresh-login`. |
-| **Not signed in** | `Session: not signed in`; next step `Run 'receipt setup' to sign in.` | Run [`receipt setup`](/cli/setup). |
-| **Gateway or sign-in unreachable** | The gateway or sign-in probe reports an `error` instead of a status; exit `1` | Check the URL is right. For a self-hosted or dev host, pass `--server-url` (and `--auth-url` if sign-in is a different origin). For `--target local`, confirm `RECEIPT_CONNECT_LOCAL_SERVER_URL` and `RECEIPT_CONNECT_LOCAL_AUTH_URL` point at your running stack. |
+| **Not signed in** | `session:  not signed in`; next step `Run 'receipt setup' to sign in.` | Run [`receipt setup`](/cli/setup). |
+| **Gateway or sign-in unreachable** | The gateway or sign-in line reads `unreachable: <error>` instead of `HTTP <status>`; exit `1` | Check the URL is right. For a self-hosted or dev host, pass `--server-url` (and `--auth-url` if sign-in is a different origin). For `--target local`, confirm `RECEIPT_CONNECT_LOCAL_SERVER_URL` and `RECEIPT_CONNECT_LOCAL_AUTH_URL` point at your running stack. |
 | **Session targets a different gateway** | Session present but its `gatewayUrl` does not match the resolved target; exit `1` | Run [`receipt setup`](/cli/setup) for this target so the saved session and the endpoint agree. |
 | **Calls fail `unauthorized` after a reused session** | `doctor` shows the session as expired, or as valid while calls still fail | The token is stale. Run [`receipt setup`](/cli/setup) (or `receipt setup --fresh-login`) to mint a fresh one. |
 
 <AccordionGroup>
 <Accordion title="doctor and the active session can point at different targets">
-The target you last ran [`receipt setup`](/cli/setup) against becomes the active session. If you `setup --target local` and then run `doctor` with no flags, `doctor` diagnoses `prod` (the default) while your active session still points at `local`. Pass the same `--target` to `doctor` that you signed in with, and the session-vs-gateway check lines up.
+The target you last ran [`receipt setup`](/cli/setup) against becomes the active session, but `doctor` diagnoses the target you hand it — `prod` when you hand it nothing. After `setup --target local`, a plain `receipt doctor` therefore checks the hosted endpoint and reports the `prod` session, or `not signed in` if you have never signed in there. Pass the same `--target` to `doctor` that you signed in with, and the session-vs-gateway check lines up.
 </Accordion>
 
 <Accordion title="A malformed session file reads as no session, not an error">
 A session file missing its gateway URL, token, or organization id — or one that will not parse — is treated as no saved session. `doctor` reports `not signed in` rather than an error, and the fix is the same: run [`receipt setup`](/cli/setup).
 </Accordion>
 </AccordionGroup>
+
+Messages from the other commands — sign-in failures, `unauthorized`, workspace and tool errors — are collected in [troubleshooting](/cli/troubleshooting).
 
 Next step: [switch the workspace your session is bound to](/cli/workspaces).

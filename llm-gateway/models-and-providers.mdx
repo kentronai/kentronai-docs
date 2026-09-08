@@ -1,0 +1,128 @@
+---
+title: "Models and providers"
+description: "Connect a provider account, choose which models a workspace may use, and read the gallery for what actually runs."
+---
+
+<Warning>
+**Two of the 32 provider tiles can be configured in this release: OpenAI and Anthropic.** Every other tile opens, but its fields are disabled and **Continue to model selection** never enables, so the wizard stops at its first step. A save call made directly against the server is refused with **"This provider is a catalog preview and cannot be configured yet."** That includes the Self-Hosted Model tile behind the **Custom Endpoints** tab. Read the gallery as a catalog of what the Model Gateway is being built toward, and press **Filter** on the Models tab to see only the tiles that will save.
+</Warning>
+
+The **Models** page is where you connect a model provider account, choose which of that provider's models a workspace may use, and decide who can manage the account and who can use it. You reach it from the **Model Gateway** area in the sidebar: its **Models** item opens the Models page in organization settings.
+
+Like the rest of organization settings, the page is owner- and admin-only, and anyone else who opens the URL is returned to the app root with no access-denied screen. Saving an account also requires authority in the active workspace, because a Models account belongs to a workspace rather than to the organization.
+
+## The provider gallery
+
+The page is titled **"Models"** and describes itself as **"Connect model providers, choose workspace models, and manage organization-level access."** It has two tabs, **Models** and **Custom Endpoints**.
+
+The Models tab gives you a `Search providers` box and a **Filter** toggle that, when pressed, shows only the providers that can actually be configured. Before any account exists, the tab opens on the empty state **"Start adding your Models here"** — "Configure a provider account, then choose the models available to this workspace." A search that matches nothing reads **"No providers found"** / **"Try another search or clear the filter."**
+
+<Frame caption="The Models tab before any provider account exists: the empty state sits above all 32 tiles, with Search providers and the Filter toggle on the right. Filter is the only reliable way to see which tiles can be saved.">
+  <img src="/images/llm-gateway/models.png" alt="The Models page in organization settings, showing the Start adding your Models here empty state above a grid of 32 provider tiles including AWS Bedrock, OpenAI, Anthropic and Self-Hosted Model." />
+</Frame>
+
+The gallery renders 32 tiles: AWS Bedrock, Google Vertex, Google Gemini, Azure OpenAI, Azure AI Foundry, Microsoft Foundry, OpenAI, Databricks, Cloudera, Cohere, Snowflake Cortex, OpenRouter, AI21, Anthropic, AWS Claude Platform, AWS Bedrock Mantle, DeepInfra, Groq, Mistral AI, ElevenLabs, Deepgram, Cartesia, Smallest AI, Perplexity AI, Together AI, xAI, Baseten, SambaNova, AWS SageMaker, Cerebras, Wafer, and Self-Hosted Model.
+
+### Telling a preview from a provider you can use
+
+A tile's hover title reads either `{n} models` or `Catalog preview`, and that is **not** the executability signal it looks like. `Catalog preview` appears on the nine tiles that map to no catalog models at all — Cohere, AI21, ElevenLabs, Deepgram, Cartesia, Smallest AI, Perplexity AI, Wafer and Self-Hosted Model. The other twenty-one non-executable tiles map to real catalog manufacturers and show a healthy model count anyway; OpenRouter's tile maps to the entire catalog. A count tells you what a tile would expose if it could be connected, not that it can be.
+
+Two things do tell you plainly. **Filter** hides every tile that cannot be saved. And inside the setup dialog, every non-executable tile badges its Authentication section **"Catalog preview"** instead of **"Models account"**, disables all of its inputs, and closes the section with **"This tile is informational until its executable runtime adapter is available."** — where an executable provider shows **"Credentials are authenticated, encrypted, and stored only in the Models account."** The nine no-model tiles add one more line, above the fields: **"This Models account form is a catalog preview. Durable account storage and execution require a reviewed runtime adapter."**
+
+Because those inputs are disabled, **Continue to model selection** never enables for any of the thirty, and the dialog cannot advance past **Configure account**.
+
+## Connect a provider account
+
+Selecting a tile opens a full-height dialog titled `Set up {Provider} and manage models`. It is three steps followed by a success screen.
+
+<Steps>
+  <Step title="Configure account">
+    Name the account in **"Account display name"** — badged **"Models account"**, with the helper **"This account belongs to Models. It is not the organization API Keys setting."** — then fill in the provider's own fields. OpenAI asks for an **"OpenAI API key"** starting `sk-`; Anthropic asks for an **"Anthropic API key"** starting `sk-ant-`. Every other tile shows its own shape, disabled: a region, access key ID and secret for the AWS family; a project ID, location and service-account JSON for Google Vertex; an endpoint and API key for the Azure family; an inference endpoint and an optional token for Self-Hosted Model.
+
+    **Continue to model selection** stays disabled until the provider is executable, the name is non-empty, and every required field is filled.
+  </Step>
+  <Step title="Model selection">
+    Headed **"Select models"**, with a running count rendered as `{n} selected · per 1M tokens · approximate latency`, **Select all** / **Clear all**, and a `Search models` box. The table lists **Model**, **Type**, **Input**, **Output** and **Latency**. These are the models this account makes available.
+  </Step>
+  <Step title="Access control">
+    Headed **"Workspace access"** — **"Access follows Receipt's existing workspace roles."** **Managers** ("Can manage provider accounts and model policy.") is **"Owners and admins"** or **"Owners only"**; **Users** ("Can use policy-allowed models.") is **"Workspace members"** or **"Managers only"**. The defaults are Owners and admins, and Workspace members. A **Review** block then lists Provider, Models account, Models and Can use, and **Save models** commits.
+  </Step>
+</Steps>
+
+On success you get `{n} models configured`, **"The encrypted workspace Models account is ready for chat."**, and a **"Canonical model ID"** block — "Use this ID in chat or agent configuration." — with a **Copy** button and the first selected id.
+
+Three things about the save are worth knowing:
+
+- **Only the API key is sent.** The dialog transmits the account name, the key field, the selected model ids and the two access levels. The region, endpoint, project and token fields on the other tiles are disabled and never leave the browser.
+- **The key is authenticated against the provider before anything is stored.** Its format is checked first, then Receipt makes a live call to the provider's own API. A key the provider rejects never becomes a stored account.
+- **What comes back is secret-free.** The account summary the page works with carries a twelve-character credential fingerprint, not the credential. The key itself is encrypted, and each save appends a hash-chained [receipt](/core/receipts-and-streams) from which the serving row is rebuilt.
+
+A failed save shows the server's own message, or **"The model selection could not be saved."** when there is none. Two more come from the store: **"Select at least one model."**, and `Model '{id}' cannot execute through {provider}.` when a chosen model cannot route through this provider.
+
+## Who may manage the account, and who may use it
+
+Models accounts are scoped to a **workspace**, and there is exactly one account per organization, workspace and provider — saving again replaces it. The page follows your active workspace, and a save with none selected fails with **"Select a workspace first."** For how workspaces and roles relate, see [Organizations and workspaces](/core/organizations-and-workspaces).
+
+The two access levels are enforced in different places:
+
+| Setting | What it controls | When it is checked |
+| --- | --- | --- |
+| **Managers** | Who may create or change this account | On the write. With **Owners only**, anyone whose workspace role is not owner is refused with **"Only workspace owners can manage this Models account."** The same refusal applies when the account already stored is owners-only. |
+| **Users** | Whether the stored credential is handed to a request | On the model call. With **Managers only**, a request from someone who is not an owner or admin of the workspace or the organization does not get this account's credential. |
+
+<Note>
+A workspace Models account is the first credential the gateway looks for, and it applies only to the models the account itself lists. When it does not apply — the model is not in its list, or **Users** is set to Managers only — the request falls through to an organization or workspace provider key, and then to platform-funded access. [Bring your own key](/llm-gateway/bring-your-own-key) covers the other two.
+</Note>
+
+Once an account exists, the Models tab replaces the gallery with a split layout: a **"Connected providers"** rail on the left, and on the right a `{Provider} Accounts` pane headed by the account name and the sub-label **"Models provider account"**. Its buttons are **Copy FQN** (which copies `{providerId}/{accountName}`), **Add model** and **Edit**, with `Add {Provider} Account` above them. In the rail, **"Add other providers"** offers **Add new models** to return to the gallery, and **Back to connected providers** brings you back.
+
+## What is in the model catalog
+
+Model ids are always `provider/model`, and they come from eleven manufacturers: `openai`, `anthropic`, `google`, `alibaba`, `deepseek`, `meta`, `mistral`, `minimax`, `moonshotai`, `xai` and `zai`. There were 75 rows when this page was written, and the code describes the list as append-only in practice — so treat the application, not this page, as the catalog. Each row carries a context window, a zero-data-retention flag, its capabilities, its reasoning efforts, the providers it can route through, and optionally its pricing.
+
+Of those 75 rows, 25 can actually run: the 15 OpenAI models that route through OpenAI, and the 10 Anthropic models, which need your own Anthropic key. The other 50 appear in the gallery and in the policy screens with no runtime behind them.
+
+An account's model table has the columns **Model**, **Type**, **Input / 1M**, **Output / 1M**, **Latency** and **Actions**; with nothing to show, the row reads **"No models available for this provider."**
+
+| Column | Where the value comes from |
+| --- | --- |
+| **Type** | The model's capabilities: `Reasoning` when it supports reasoning, otherwise `Multimodal` when it accepts image input, otherwise `Chat`. |
+| **Input / 1M**, **Output / 1M** | The catalog's per-token pricing, multiplied out to a per-million figure. A model with no pricing shows `—`. |
+| **Latency** | A heuristic, not a measurement. See below. |
+| **Actions** | Copy the model id, or reopen the provider's setup dialog. |
+
+<Info>
+The **Latency** column is derived entirely from the model's own catalog attributes: `≈ 3–8s` for a reasoning model, `≈ 2–6s` for a model with a context window of a million tokens or more, and `≈ 0.8–3s` otherwise. Nothing is timed, and the number does not move when a provider slows down.
+</Info>
+
+<Note>
+The chat composer has no model picker in this release, so the canonical model id is not something a person picks per message. The model a turn uses is resolved on the server from the thread's model and the organization's policy.
+</Note>
+
+## Enable or disable models for one manufacturer
+
+The page at `/organization/settings/models/{providerId}` looks like a detail view of a tile in the gallery. It is not. It is the enable/disable list for one **model-catalog manufacturer**, and it belongs to the policy system rather than the account system. You reach it from **View all models** on the Provider policy page, or by URL. Its own back link reads **"Go back"**, which reinforces the illusion.
+
+The form is titled with the manufacturer's name and described as **"Enable or disable models for this provider in your organization."**, with the help line **"Changes apply immediately. Disabled models are unavailable to the organization."** With nothing to list it reads **"No models available for this provider."**
+
+<Frame caption="The per-manufacturer list for OpenAI. The workspace strip above the form becomes a switcher once the organization has more than one workspace, the title is a manufacturer rather than a provider account, and every switch is on — on this screen, checked means the model is enabled.">
+  <img src="/images/llm-gateway/provider-models.png" alt="The OpenAI model list with a Go back link, a workspace strip set to Default, and a column of model switches all turned on." />
+</Frame>
+
+<Warning>
+**The model switches mean opposite things on the two policy screens.** Here, a checked switch means the model is **enabled**. In the **Model Controls** section of Provider policy, a checked switch means the model is **disabled**. This is a real inconsistency in the product, not a documentation simplification — read the screen you are on before you flip anything, and confirm the result on the other. See [Model policy](/llm-gateway/model-policy).
+</Warning>
+
+## Custom endpoints
+
+The second tab is headed **"Custom endpoints"** — "Add an OpenAI-compatible or self-hosted inference endpoint and then select the models it exposes." Its **Add custom endpoint** button opens the setup dialog for the **Self-Hosted Model** tile, whose fields are an **"Inference endpoint"** and an optional **"Authentication token"**.
+
+<Frame caption="The Custom Endpoints tab holds a single action, Add custom endpoint, which opens the Self-Hosted Model provider dialog.">
+  <img src="/images/llm-gateway/custom-endpoints.png" alt="The Custom Endpoints tab showing the Custom endpoints heading, its one-line description, and an Add custom endpoint button." />
+</Frame>
+
+<Warning>
+**Custom endpoints cannot be saved in this release.** Self-Hosted Model is a catalog-preview tile, so its dialog stops at the same disabled first step as the rest. The tab also points outward, not inward: it describes an endpoint Receipt would call as a provider, not a way to route another application's traffic through Receipt. There is no OpenAI-compatible endpoint on the Receipt side — see [Model Gateway overview](/llm-gateway/overview).
+</Warning>
+
+Next step: [add your organization's own provider key](/llm-gateway/bring-your-own-key).

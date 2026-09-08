@@ -1,0 +1,172 @@
+---
+title: "Data handling and security"
+description: "Where your credentials live, what the browser and an agent are allowed to see, exactly what telemetry leaves the deployment, and how to report a vulnerability."
+---
+
+This page answers the questions a security reviewer asks: where your credentials live, what a browser and an agent are allowed to see, what leaves the deployment, and what to do when you find a flaw. It describes what the product does today — where a control is not implemented, it says so plainly rather than describing an intention.
+
+## Credentials at rest
+
+### Receipt Connect connections
+
+For a Receipt Connect integration, the raw provider credential stays with the integration provider — Nango — which owns the OAuth or API-key authorization, the credential storage and the refresh state. Receipt stores only an encrypted reference: the mapping from `organization_id + workspace_id + provider + name` to the provider's own integration and connection identifiers. It lives in the `org_connection_secret` table as `ciphertext`, `iv`, `auth_tag` and `key_version`, encrypted with **AES-256-GCM** using a 12-byte IV and key version 1, under a wrapping key from deployment configuration (`RECEIPT_CONNECTION_ENCRYPTION_KEY_B64`) that must decode to exactly 32 bytes.
+
+There are four connection kinds. Two are the only cases where Receipt holds a credential at all, both explicitly user-initiated imports and both encrypted in the same table: an imported AWS `credential_process` bundle (`aws-credential-process`) and an imported GitHub token (`github-token`). A third, `local-aws-profile`, stores only a local AWS profile *name*, not keys. See [Receipt Connect](/mcp-gateway/receipt-connect).
+
+<Warning>
+This claim covers Receipt Connect connections only. It does not describe how a Slack or Microsoft Teams installation stores its credentials, and you should not read it as covering those. Their at-rest handling is not documented here.
+</Warning>
+
+### Organization provider keys
+
+Organization provider API keys are stored in `org_provider_api_key` as `ciphertext`, `iv`, `auth_tag` and `key_version` — never as plaintext. The cipher is **AES-256-GCM** with a 32-byte key, a 12-byte IV, and key version 1. The wrapping key comes from deployment configuration (`BYOK_ENCRYPTION_KEY_B64`), not from anything in the database, and the threat model says why: a database-only leak must not be enough to recover plaintext provider credentials.
+
+Only a **non-reversible fingerprint** of a key — the first 12 hex characters of its SHA-256 — is ever written to logs. The structured log lines around key reads and writes carry that fingerprint and nothing else from the key.
+
+<Note>
+There is no re-encryption or rotation routine anywhere in the codebase, and decryption hard-fails on any other key version with `Unsupported BYOK key version: {n}`. Rotating a wrapping key after keys are stored makes that material permanently undecryptable. The same applies to `RECEIPT_CONNECTION_ENCRYPTION_KEY_B64`. See [Bring your own key](/llm-gateway/bring-your-own-key).
+</Note>
+
+### What the browser is allowed to replicate
+
+The browser replication layer does not mirror the connection table. The publication declares an **explicit column list** for `org_connection_secret` — `id`, `organization_id`, `workspace_id`, `provider`, `name`, `kind`, `status`, `expires_at`, `last_validated_at`, `created_at`, `updated_at`. Ciphertext, IV, auth tag, key version and internal ownership metadata therefore never reach a client, even though connection `status`, which the interface does need, lives in the same table. Organization provider keys are not in the browser schema at all.
+
+### What is never put into an agent's environment
+
+- Raw provider API keys, OAuth access and refresh tokens, and provider client secrets. A worker receives generated CLI configuration plus a Receipt credential helper instead.
+- The integration provider's environment secret key, used only server-side to authenticate Receipt's own calls to it.
+- The integrations database URL, barred from web clients, CLI artifacts, task packets and sandbox workers.
+- A token inside a generated MCP client config. The generated config, the file written to disk, and the config the agent reports back are all checked to confirm they are token-free; the bridge is a launcher that reads the saved session at run time instead.
+- Ambient cloud instance credentials: the sandbox environment sets `AWS_EC2_METADATA_DISABLED=true`, so a worker cannot borrow the host's instance role.
+
+<Note>
+The corollary is what you *do* have to protect: the server's own secrets, and the CLI session file, which holds a 12-hour bearer token that signing out does not revoke. [Gateway security model](/mcp-gateway/security-model) covers both.
+</Note>
+
+### Which calls are recorded
+
+Every action through the REST call route (`POST /connect/call`) writes a `tool.called` receipt and, when the call succeeds, a `tool.observed` receipt into a per-workspace stream. Output stored in a receipt is truncated to 2,000 characters with a `truncated` flag. A failed call gets only `tool.called`, carrying its error. Receipt-writing failures are logged and swallowed rather than being allowed to fail a working tool call.
+
+<Warning>
+**Calls made through the MCP bridge are not yet recorded.** The JSON-RPC endpoint behind the bridge (`POST /connect/mcp`) enforces the same scope and allowlist checks, but writes no `tool.called` or `tool.observed` receipt. Do not treat gateway receipts as a complete record of tool activity until that gap closes. [Receipts and audit](/guard/receipts-and-audit) lists everything that does and does not write a receipt.
+</Warning>
+
+## Telemetry: what leaves the deployment
+
+Receipt sends telemetry to exactly **one** third-party service, PostHog, and uses it for **error tracking only**.
+
+### The configuration, as implemented
+
+| Setting | Value |
+| --- | --- |
+| Interface autocapture (clicks, inputs) | Off |
+| Pageview capture | Off |
+| Pageleave capture | Off |
+| Session recording | Disabled |
+| Surveys | Disabled |
+| Exception autocapture, browser | On |
+| Exception autocapture, server | Off |
+
+The browser loads only the slim bundle plus the error-tracking extension, and initialization is deferred until after page load and the browser is idle. The server client initializes lazily on its first event and flushes on shutdown.
+
+**There are no product-analytics events of any kind.** No named product event, page view, storage or message-volume event exists in the codebase — everything sent is an exception, including the file-upload event names listed below. Prompts are not exported to any observability vendor either: there is no LLM-tracing integration and no model-SDK telemetry option enabled, so prompt content leaves the deployment only to the model provider serving your request.
+
+### What a capture contains
+
+Identity is the **application user identifier**, set as the distinct id, with two person properties: the **organization identifier** and whether the chat session is anonymous. Chat super-properties ride along on every subsequent capture — chat scope, anonymity, organization id, thread id, model id, mode id, context-window mode and reasoning effort. Stale keys are cleared rather than left behind, and the client calls reset on logout. **No email address, display name, plan name, or organization name is ever sent** — only opaque identifiers.
+
+Beyond the exception name and message, a server capture carries the event name, request id, route, method, trigger, thread id, organization id, model id, error code, error tag, whether the error is retryable, the release and the environment — plus nested objects for the actor, thread, model, policy, stream, usage, outcome, breadcrumbs and cause. In practice that includes the requested and resolved model ids, token counts, estimated and actual cost in USD, and the allowed and denied tool keys, which reveal which integrations an organization has enabled.
+
+<Accordion title="Chat and file event names that can appear in a capture">
+The chat and file paths emit these names: `chat.request`, `chat.resume.request`, `chat.route.failed`, `chat.resume.route.failed`, `chat.thread.title.generation.timed_out`, `chat.stream.cleanup.failed`, `chat.stream.cleanup.timed_out`, `chat.stream.persist.failed`, `chat.stream.persist.timed_out`, `chat.stream.resume.persist.failed`, `chat.stream.resume.persist.timed_out`, `chat.stream.resume.persist.interrupted`, `chat.branch.version.conflict`, `chat.edit.rejected_invalid_target`, `file.upload.vector_index.failed`, `file.upload.route.failed`, and `file.markdown.route.failed`.
+</Accordion>
+
+### Which failures are captured, and which are not
+
+Routine and expected failures are classified as no-capture and dropped before anything is sent: unauthorized requests, thread-not-found, an invalid edit target, rate-limit-exceeded, quota-exceeded, context-window-exceeded, file-upload plan denials, and most model-policy denials.
+
+Genuine faults are sent: thread-forbidden, branch version conflicts, rate-limit persistence failures, model provider errors, tool execution failures, message persistence failures, stream protocol errors, schema decode failures, the background and detached failures listed above, and anything the classifier does not recognise. Among model-policy denials, only the key-related ones — a missing provider API key, a model unsupported by the provider key, and a free-tier denial — are sent; the rest fall through to no-capture.
+
+### Where it goes, and when it is off
+
+Both clients are **fully disabled** when the project API key (`POSTHOG_PROJECT_API_KEY`) is unset. The destination host is `POSTHOG_HOST`, which defaults to PostHog's US cloud ingest endpoint. There is no separate development gate: a key set in a local environment file makes telemetry fire in development exactly as in production.
+
+**Self-hosted builds disable it entirely.** The configuration returns no API key when the build is self-hosted, and the instance readiness checklist reports PostHog as `not_available_in_self_host`.
+
+## Telemetry caveats you should know
+
+<Warning>
+The facts below are properties of the current implementation. Read them alongside the restrained configuration above, not instead of it.
+</Warning>
+
+**Provider error text is forwarded verbatim.** The exception message is the readable error, assembled by walking the provider or gateway payload and returning the first line of whatever the provider said. It is truncated to one line and class prefixes are stripped, but it is **not redacted**: there is no allow-list, scrubber, property denylist or before-send hook anywhere in the codebase. When a provider rejects a request and quotes the offending input back — common for content-policy rejections, invalid-attachment errors, oversized-field errors and tool-argument validation failures — that fragment is transmitted. The file routes deliberately send no filename — the upload object key is built as `uploads/org/<organization id>/<scope>/user/<user id>/<timestamp>-<uuid>.<extension>`, so a storage or parse error that quotes the key back exposes your organization and user identifiers and the file extension, not the file name.
+
+**There is no user-facing opt-out.** No consent banner exists, Do Not Track is not honoured, Global Privacy Control is not handled, capture is not opted out by default, and no account or organization setting toggles telemetry. The only opt-outs are operator-level: unset the project API key, or run a self-hosted build.
+
+**The zero-data-retention flag does not suppress a capture.** The compliance flag is read and recorded into the payload as `zeroDataRetentionRequired`, but it is never consulted to decide whether to send. An organization with zero data retention required still has its failure telemetry, including the provider error message above, transmitted.
+
+**Browser captures carry the SDK's standard properties.** Current URL, path, referrer, browser, operating system, device type and screen size all ride along, and the ingestion endpoint records the client IP address. Chat and thread identifiers appear in URLs, so they travel too. Persistence is enabled, so a persistent cross-subdomain cookie is set, and nothing sets a property denylist or enables the SDK's personal-data property masking. One asymmetry: the browser client withholds the user identifier for an anonymous session, while the server uses the acting user identifier as the distinct id regardless, so anonymous sessions are pseudonymously identified server-side.
+
+Two smaller facts complete the picture. A separate, optional exporter for logs, traces and metrics exists and is off unless `EFFECT_OTLP_BASE_URL` is set. And the connector catalog renders provider icons from third-party icon CDNs as direct browser requests, so those hosts see the visitor's IP address and referrer on any page that renders the integrations grid.
+
+## What zero data retention actually does
+
+Zero data retention is an **organization compliance policy**, not an infrastructure setting. The toggle, `Require ZDR (Zero Data Retention)`, describes itself as `Only allow models from AI providers that do not retain data. This is enforced at the provider level.`, and its help line reads `Applies immediately to model availability.` When it is on:
+
+- **Model selection is restricted.** Any model whose catalog entry is not marked as zero-data-retention is denied, returning a 403 with the reason `policy_denied:compliance`. The catalog entry's flag is the whole test; there is no runtime check against the provider.
+- **Tool access is gated.** The tool policy adds a `blocked_by_compliance` reason. In this release that reason applies to one tool — Anthropic code execution — and only while the organization has no active executable Anthropic key.
+- **Saving an organization provider key trades it away for that provider.** Receipt asks first, in a dialog titled `Disable ZDR for this provider?` reading `Your organization requires ZDR right now. Saving a {providerName} API key will turn off ZDR enforcement for {providerName} requests that use your org key. Other providers keep their current ZDR behavior.`, confirmed with `Save key and disable ZDR`. That matches the policy engine: an active executable organization key sets a bypass and skips the compliance check for that model.
+
+<Note>
+Scope this claim carefully. Zero data retention restricts which models can be selected and gates tool access. It is **not** an end-to-end no-retention guarantee across the whole system, and it does **not** suppress application error telemetry.
+</Note>
+
+<Warning>
+**The companion flag, `Require organization provider key`, is not enforced on the server.** It has a toggle and a description — `Only allow models from providers that have an active organization API key.` — and a real client-side effect: the chat model picker hides every model whose route providers lack an active executable organization key. But the server-side compliance check reads only the ZDR flag, so a request that names a hidden model is not rejected. Treat it as a picker filter, not a boundary.
+</Warning>
+
+## Sessions, cookies, and origins
+
+Sessions are Postgres-backed and issued by the auth layer. Resetting a password deletes every existing session for that user, and concurrent sessions are capped at ten per user, revocable individually from account settings.
+
+### The public origin must be exact
+
+`BETTER_AUTH_URL` must be the **exact public origin** you actually browse to — no path, query, fragment or credentials. It is required at module load: the process throws `Missing BETTER_AUTH_URL. Configure apps/start/.env before starting auth.` if it is absent, and trailing slashes are stripped.
+
+If the server-side origin and the browser-bundled origin disagree — after moving a port, or after baking one origin into a production bundle while serving another — sign-in fails with CORS errors. The fix is to set both to the same origin and rebuild, not to relax the origin rules.
+
+### Additional trusted origins
+
+Trusted origins are the canonical `BETTER_AUTH_URL` plus any entries in `RECEIPT_LEGACY_PUBLIC_ORIGINS`, and each entry is strictly validated. Every entry must be:
+
+- an absolute **HTTPS** origin,
+- with no embedded credentials,
+- with no wildcard host,
+- and with no path, query or fragment.
+
+Failures are reported with the prefix `Invalid RECEIPT_LEGACY_PUBLIC_ORIGINS:`.
+
+### Cookie behaviour
+
+- Cross-subdomain cookies are **always enabled**. A cookie `domain` is added only when `BETTER_AUTH_COOKIE_DOMAIN` is set, so the enabled-without-a-domain case is the default.
+- Secure cookies follow the **protocol of `BETTER_AUTH_URL`** — HTTPS means secure — unless `BETTER_AUTH_USE_SECURE_COOKIES` overrides it, accepting `true`, `1`, `false` or `0`. The override exists because a bootstrap deployment behind an HTTP-only load balancer would otherwise silently drop the session cookie and make browser sign-up look broken.
+
+## Reporting a vulnerability
+
+**Do not report a security vulnerability through public GitHub issues.** Report it through your organization's designated security contact channel.
+
+Include all of the following:
+
+- The issue type — for example buffer overflow, SQL injection or cross-site scripting.
+- Full source paths of the files involved.
+- The tag, branch, commit or direct URL that pins the version you are reporting against.
+- Any special configuration required to reproduce it.
+- Step-by-step reproduction instructions.
+- Proof-of-concept or exploit code, if you can provide it.
+- The impact, including how an attacker might exploit the issue.
+
+<Note>
+No public reporting address or PGP key is published with the product. Who to contact, and how, is something your Receipt operator configures — ask them. See [Getting help](/core/getting-help).
+</Note>
+
+Next step: [review the controls Guard actually enforces](/guard/overview).

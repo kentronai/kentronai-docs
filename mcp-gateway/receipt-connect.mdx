@@ -1,0 +1,113 @@
+---
+title: "Receipt Connect connections"
+description: "What a connection is, what Receipt stores and does not store, how connections are addressed, and what each connector publishes as tools."
+---
+
+Receipt Connect is the boundary between Receipt and the systems you already use — AWS, GitHub, Jira, Google Drive, Notion, Zoho and the rest of the catalog. Connecting an app creates a **connection**, and everything Receipt can then do on your behalf — in chat, in a background run, from the CLI, from an MCP client — is decided by that connection.
+
+A connection answers four questions: which workspace may use it, what Receipt holds for it, how you refer to it, and which tools it publishes. This page answers the last three. [Where a connection lives](/mcp-gateway/connection-scopes) answers the first, and [the connector catalog](/catalog/connectors) lists the apps you can connect.
+
+## Who owns what
+
+Receipt Connect splits ownership deliberately between the integration provider and Receipt.
+
+**The integration provider owns** external authorization — OAuth, API keys and tokens — the provider credential itself, and token refresh.
+
+**Receipt owns** your user and workspace authentication, Receipt Connect token issuance, the mapping from a workspace connection name to a provider connection, credential materialization for real CLIs, and runtime policy, receipts and audit.
+
+<Note>
+Every `/connect/call` action and every background run writes receipts. Calls made through the aggregate MCP bridge are not yet recorded — see [the aggregate MCP server](/mcp-gateway/aggregate-server).
+</Note>
+
+## What Receipt stores
+
+For Receipt Connect integrations, the raw provider credential stays with the integration provider. Receipt stores only an **encrypted reference**:
+
+```text
+organization + workspace + provider + name  ->  integration id + connection id
+```
+
+That reference lives in the `org_connection_secret` table, encrypted with AES-256-GCM under a key from `RECEIPT_CONNECTION_ENCRYPTION_KEY_B64`. The browser never sees the encrypted payload: replication carries only the connection's id, organization, workspace, provider, name, kind, status, expiry, last-validated time and timestamps, and only to a reader who is a member of that workspace — so the provider's own integration and connection ids stay server-side. For the cipher and the full column allowlist, see [the security model](/mcp-gateway/security-model).
+
+<Warning>
+This describes **Receipt Connect integrations** — the connectors in the catalog. The Slack and Microsoft Teams apps install through their own flows rather than through Receipt Connect, so do not carry this storage claim across to them.
+</Warning>
+
+### The two cases where Receipt does hold a credential
+
+A connection has one of four kinds:
+
+| Kind | What is stored | Holds a real credential? |
+| --- | --- | --- |
+| `nango-reference` | An encrypted reference to the provider connection | No |
+| `local-aws-profile` | A local AWS profile *name* only, no keys | No |
+| `aws-credential-process` | An AWS `credential_process` bundle you imported | Yes |
+| `github-token` | A GitHub token you imported | Yes |
+
+The last two are the only cases where Receipt holds a credential. Both are explicit, user-initiated imports, and both are encrypted in the same table as the references.
+
+Every connection also carries a status of `valid`, `expired` or `invalid`, plus an expiry and a last-validated time when the provider supplies them.
+
+## How a connection is addressed
+
+A connection is addressed as `provider:name`, and `default` is the implicit name. When a name is supplied, Receipt normalizes it: the value is trimmed, whitespace becomes `-`, and the result is lowercased. An empty name becomes `default`.
+
+The gateway accepts either a connection id or a `provider:name` selector, and the organization and workspace predicates are part of the same query as the selector — so a valid id from another organization can never be used as a credential lookup for yours.
+
+Capability keys follow one rule: the bare provider id for the default connection, and `provider.name` for a named one. One AWS connection plus a second one named `prod` therefore appear under two keys:
+
+```json
+{
+  "aws":      { "provider": "aws", "name": "default" },
+  "aws.prod": { "provider": "aws", "name": "prod" }
+}
+```
+
+That naming rule is why a connection called `prod` does not produce an AWS CLI profile called `prod`. For AWS, Receipt writes the profile `receipt` for the default connection and `receipt-<name>` for a named one — so `prod` becomes the profile **`receipt-prod`**. The default connection is additionally installed as the `[default]` profile, so a plain `aws` command inside a run still routes through Receipt Connect even when a tool subprocess drops the environment variables.
+
+<Info>
+The Integrations pages never offer a connection-name field, so the connections you create there are all `default`, and `receipt connect <provider>` does not send a name either. A connection gets a name only when the client that opens the connect session supplies one. One feature does: cloud accounts connected inside the [Agent Registry](/catalog/agent-registry) use the reserved name `agent-registry` and are filtered out of the Integrations list, so a registry scan never reuses — and is never reused by — the AWS, Azure or Google Cloud connection you made for everything else.
+</Info>
+
+## The capability manifest
+
+`GET /connect/capabilities` returns the manifest of what the caller can currently reach. Each capability carries a `command`, `provider`, `source`, `transport`, `status`, `connectionId`, `name`, `metadata` and `discoveredAt`, plus an `expiresAt` when the connection has one.
+
+- A capability's `status` is `valid`, `expired` or `invalid`.
+- The manifest's own status is `online` when any capability exists, and `offline` otherwise.
+
+A capability is treated as **usable** only when its status carries no failure word. The matcher rejects `invalid`, `expired`, `failed`, `failure`, `error`, `disconnected`, `revoked`, `unauthorized`, `unauthenticated`, `missing` and `blocked` — so an expired connection is present in the manifest but is not usable, and a chat request that needs it does not start a background run.
+
+## What a connector publishes
+
+Receipt classifies each catalog connector into exactly one execution surface, derived purely from the checked-in manifest and never from connection metadata. The surface decides what tools, if any, that connector publishes.
+
+| Surface | Connectors | What it publishes |
+| --- | --- | --- |
+| `typed-proxy` | 18 | Reviewed, checked-in tools, each with a fixed provider method and path, a closed JSON Schema, and an explicit `read` or `write` access class |
+| `compatibility-read` | 39 | One Receipt-owned tool, `read-provider-resource` |
+| `provider-mcp` | 2 | Dynamic tools discovered from the provider's own MCP server — deliberately excluded from the aggregate gateway |
+| `resource-aware-get` | 2 | One read tool, for the Atlassian OAuth connectors, where Receipt resolves the site and rewrites the path |
+| `command-auth` | 2 | No Receipt tools at all — the connection becomes real CLI configuration inside a worker |
+
+Across the 63 connectors that comes to 91 static Receipt tools, of which 3 are writes. Writes stay off until an owner or admin enables them for that connection; there is no per-action approval prompt in this release. See [tools and permissions](/mcp-gateway/tools-and-permissions).
+
+A `typed-proxy` manifest is validated when the catalog loads, so the rules are hard: `additionalProperties: false` is enforced on every tool schema, `GET` endpoints must be classed `read`, path placeholders must match the declared path parameters in order and each must be a required string input, and any base-URL override must be an HTTPS origin with no path, query or fragment. At call time arguments are validated against that schema, path parameters are URL-encoded into the path, and remaining arguments become query parameters on a GET or a JSON body otherwise. Request bodies are capped at 1 MiB.
+
+<Note>
+`gcp` sits in two places at once. Its manifest declares both a command-backed credential mode and proxy tools, and the classifier checks proxy tools first — so `gcp` reports as `typed-proxy` while still producing an isolated `gcloud` configuration in a worker.
+</Note>
+
+### `read-provider-resource`
+
+Every ordinary connector without a narrower manifest gets exactly one Receipt-owned compatibility tool, and so do the two Atlassian OAuth connectors. Its description, verbatim:
+
+> Read one provider-relative API resource through Receipt and Nango. This tool permits GET only; absolute URLs, request bodies, headers, and proxy routing overrides are rejected.
+
+Its input schema accepts only two things: a required `path` that must begin with a single `/` and be at most 4096 characters, and an optional `query` object of scalars or arrays of scalars — at most 100 properties, string values at most 8192 characters, at most 100 array items. Nothing else is accepted.
+
+The path parser rejects non-GET methods, paths that do not start with `/`, `//`-prefixed paths, backslashes, `#`, `.` and `..` segments, `%2f` and `%5c` encodings (decoded repeatedly, up to ten times), `/https:`-style absolute-URL smuggling, and any request body. The tool takes no headers at all, and on the underlying call path a header is rejected rather than dropped — `authorization`, `cookie`, `host`, `content-length`, `transfer-encoding`, and anything beginning `nango-`, `proxy-` or `x-forwarded-` fail the request with `header '<name>' is not allowed`.
+
+Responses are bounded at 5 MiB with a 30-second timeout, and only a safe allowlist of response headers is echoed back: `content-language`, `content-type`, `etag`, `last-modified`, `link`, `retry-after`, `x-ratelimit-limit`, `x-ratelimit-remaining` and `x-ratelimit-reset`.
+
+Next step: [decide which operations each connection allows](/mcp-gateway/tools-and-permissions).

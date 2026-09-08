@@ -1,0 +1,73 @@
+---
+title: "Files and attachments"
+description: "What you can attach to a chat message, the exact limits, and how a file changes the answer to your next question."
+---
+
+You can attach files to a chat message from the `+` menu's **Attach files** item, or by dragging them anywhere onto the chat page — while you drag, the composer shows **Drop files here to upload** above `Release to attach them to this message.` (that second line reads `Release to attach them to this message too.` once the message already has an attachment). Receipt checks each file against an accepted-type list, converts most of them to Markdown, and — depending on the file and the model — either hands it to the model directly or retrieves the relevant part of it on your next question.
+
+Pasting 2,000 characters or more of plain text also becomes a `.txt` attachment rather than inline text; [Your first chat](/co-worker/your-first-chat) covers that. However a file arrives, the send button stays blocked until every attachment has finished uploading.
+
+## What you can attach
+
+| Category | Extensions | MIME types Receipt also accepts |
+|---|---|---|
+| PDF | `.pdf` | `application/pdf`, `application/x-pdf` |
+| Images | `.jpeg`, `.jpg`, `.png`, `.webp`, `.svg` | `image/jpeg`, `image/png`, `image/webp`, `image/svg+xml` |
+| Plain text and markup | `.txt`, `.html`, `.htm`, `.xml` | `text/plain`, `text/html`, `application/xml` |
+| Spreadsheets | `.xlsx`, `.xlsm`, `.xlsb`, `.xls`, `.et`, `.ods`, `.csv` | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`, `application/vnd.ms-excel.sheet.macroenabled.12`, `application/vnd.ms-excel.sheet.binary.macroenabled.12`, `application/vnd.ms-excel`, `application/vnd.oasis.opendocument.spreadsheet`, `text/csv` |
+| Documents | `.docx`, `.odt`, `.md`, `.markdown` | `application/vnd.openxmlformats-officedocument.wordprocessingml.document`, `application/vnd.oasis.opendocument.text`, `text/markdown`, `text/x-markdown` |
+| Apple Numbers | `.numbers` | `application/vnd.apple.numbers` |
+
+<Note>
+`.et` is on the accepted-extension list without a corresponding entry on the accepted-MIME-type list — see the validation order below for what that means in practice.
+</Note>
+
+## Limits
+
+Each file is capped at **10 MB**, and you can attach up to **10 files** to a single message. Once you're at the limit, the **Attach files** item in the `+` menu relabels itself **Attach files (max reached)**, and dragging more files onto the page shows **Attachment limit reached** — `Remove one file first to upload more.`
+
+## How Receipt decides whether a file is accepted
+
+The order matters, and it isn't "check the extension first":
+
+1. If the browser-reported MIME type matches one of the accepted MIME types above, the file is **accepted immediately** — the extension is never even looked at.
+2. If the MIME type is present and doesn't match, but also isn't empty or the generic `application/octet-stream`, the file is **rejected immediately**.
+3. Only when the MIME type is **empty or `application/octet-stream`** does Receipt fall back to checking the file extension against the accepted-extensions list.
+
+This is what the `.et` gap means in practice. Because `.et` has no MIME type on the accepted list, it can only reach step 3: it is accepted when the browser reports no MIME type for it or `application/octet-stream`, and rejected at step 2 if the browser reports anything else.
+
+### Exact error strings
+
+- `File type is not supported for markdown conversion` — the MIME/extension check failed.
+- `File is empty` — shown to you as `Uploaded file is empty`.
+- `File exceeds limit of 10MB` — over the 10 MB size cap.
+- `Missing file field` — the upload request didn't include a file at all.
+
+<Warning>
+A deployment with no markdown conversion worker configured refuses anything that isn't a direct-text file, with the message: `This self-hosted instance only accepts direct text attachments until the markdown worker is configured.` The worker is configured with `CF_MARKDOWN_WORKER_URL` and `CF_MARKDOWN_WORKER_TOKEN`; see [Configuration](/core/configuration).
+</Warning>
+
+## What happens after upload
+
+Files whose type is `.txt`, `.md`, `.markdown`, `.csv`, `.html`, `.htm`, or `.xml` are **read inline** — Receipt reads the text directly with no conversion step. Every other accepted type (PDF, images, Office formats, OpenDocument, Numbers) is sent to a Markdown conversion worker, which has a 20,000 ms timeout (`CF_MARKDOWN_WORKER_TIMEOUT_MS` changes it on a deployment you run yourself). If that step fails, you'll see `Markdown conversion timed out` or `Failed to convert uploaded file`.
+
+## How an attachment reaches the model
+
+- **Images and PDFs** are handed to the model **natively** — but only when the active model declares that it supports image or PDF input. If it doesn't, they fall back to the same path as everything else.
+- **Everything else** uses retrieval: the converted Markdown is split into paragraph-aware chunks of roughly **1,600 characters**, with **260 characters** of overlap between chunks, capped at **140 chunks per document**.
+
+On your next question, Receipt embeds your message, searches the attachment's chunks, and appends up to **8 chunks (12,000 characters)** to your message before the model sees it, under a header that begins `User-provided attachment context is available below.`
+
+If nothing comes back from that search — because embeddings are off, because nothing was indexed for that file, or because the search itself failed — Receipt falls back to appending the file's whole stored Markdown, truncated to **2,000 characters per file**, instead.
+
+Documents uploaded as organization knowledge are retrieved on the same turn, under a separate header that begins `System-provided organization knowledge is available below.` Only organization owners and admins can upload them, and they are only retrieved once your organization has at least one knowledge document that is active and finished indexing; see [Org Brain](/catalog/org-brain).
+
+<Note>
+Embeddings are skipped entirely when your organization has provider keys saved but none of them is an OpenAI key — a non-OpenAI key can't authenticate the embedding endpoint. The upload still succeeds — you just get the truncated-excerpt fallback instead of ranked retrieval on that file.
+</Note>
+
+## File uploads aren't gated by plan
+
+Some parts of Receipt's own copy suggest file uploads are a paid-plan feature — the upload route still contains a check that would return `This feature is available on the Plus plan and above.` if it ever denied a request, and the drag-and-drop hint has a locked state that reads **File uploads aren't available** / `Upgrade to attach files in chat.` In this release, that check always allows the request, so every plan can attach files today and neither string can appear. The matching chat error string is listed on [Errors and limits](/co-worker/errors-and-limits).
+
+Next step: [monitor your runs on the Tasks, Sessions and Computers pages](/co-worker/monitoring).

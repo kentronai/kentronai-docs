@@ -1,0 +1,119 @@
+---
+title: "Writing a skill"
+description: "The SKILL.md contract an organization skill has to satisfy, how its name becomes its identity, and what makes a skill an agent will actually open."
+---
+
+A skill is one Markdown file. You write it, an owner or admin uploads it on the [Skills page](/catalog/skills), and from then on new background runs receive it in a read-only catalog the agent can read. There is no build step, no manifest and no packaging format to learn — the whole contract fits on this page.
+
+## A complete SKILL.md
+
+```markdown
+---
+name: quarterly-revenue-report
+description: >
+  Use when asked to produce or refresh the quarterly revenue report, so the
+  sections, rounding and currency handling match what finance already publishes.
+---
+
+# Quarterly revenue report
+
+## Before you start
+
+Confirm which quarter is being asked for. If the request is ambiguous, use the
+most recently closed quarter and say which one you used.
+
+## Sections, in order
+
+1. Headline revenue, rounded to the nearest thousand.
+2. Revenue by segment, largest first.
+3. Quarter-over-quarter movement, as an absolute figure and a percentage.
+4. Anything unusual, with the reason.
+
+## Rules
+
+- Report in the reporting currency; never mix currencies in one table.
+- Quote the source of every figure you did not compute yourself.
+- If a figure cannot be sourced, keep the row and write `Not available`.
+```
+
+That is the entire file: a `---` frontmatter block carrying `name` and `description`, then free-form Markdown. Everything after the closing `---` is stored as written and never parsed — write it for the agent that will read it, in whatever structure makes the instructions clear.
+
+The file has to be named `SKILL.md`, has to decode as UTF-8 (`SKILL.md must contain valid UTF-8 text.`) and has to be 256 KB or smaller. One file is the whole skill; there is no way to upload supporting files alongside it. The rest of the upload flow — where the button is, what the picker accepts, how versions appear in the table — is on [Skills](/catalog/skills).
+
+## The frontmatter contract
+
+The parser is deliberately small. It is not a general-purpose YAML parser, and it sits on an authorization boundary, so it accepts a narrow shape: anything it does not recognise is ignored, and the two fields it requires are enforced.
+
+- The **first line must be `---`**, and the next line that is just `---` closes the block.
+- Inside the block only `key: value` lines are read. Keys are lowercased, and **unknown keys are ignored** rather than rejected — so an extra key carried over from another tool does no harm, but a misspelled `discription` leaves the required `description` unset and the upload fails on that instead.
+- Surrounding single or double quotes are stripped from a value.
+- A value of `>` opens a folded block and `|` opens a literal block; the indented lines that follow are joined with spaces or with newlines respectively, and the first blank line ends the block — anything after it is dropped.
+- `name` and `description` are both required and must be non-empty after trimming. `name` is limited to **120 characters**, `description` to **2,000**.
+
+<Warning>
+**Only the bare `>` and `|` open a block.** The chomping variants that skills written for other tools commonly use — `>-`, `|-`, `|+` — are not recognised. A `description: >-` is read as the literal two-character value `>-`, the indented lines beneath it are discarded, and the upload succeeds: you get a saved skill whose description is the literal `>-`, which leaves the agent nothing to route on. Use the bare `>`, or put the description on one line.
+</Warning>
+
+Nested maps, lists and multi-document YAML are not supported. If you need structure, put it in the body.
+
+| Message | Cause |
+|---|---|
+| `SKILL.md must start with YAML frontmatter.` | The file does not begin with `---` |
+| `SKILL.md frontmatter is not closed.` | No closing `---` line |
+| `SKILL.md frontmatter name must be a non-empty string.` | `name` missing or empty |
+| `SKILL.md frontmatter description must be a non-empty string.` | `description` missing or empty |
+| `Skill name exceeds 120 characters.` | `name` too long |
+| `Skill description exceeds 2000 characters.` | `description` too long |
+| `Skill name must produce a non-empty lowercase slug.` | `name` contains nothing that survives slugging |
+
+## The name becomes the slug
+
+The slug is derived from `name`: accents are stripped, everything is lowercased, runs of anything that is not a letter or a digit become a single `-`, leading and trailing dashes are trimmed, and the result is cut to 64 characters. `Quarterly Revenue Report` and `quarterly-revenue-report` both produce `quarterly-revenue-report`.
+
+The slug, not the display name, is the identity, and the skill's identifier is derived from your organization together with that slug. Two admins who upload the same name converge on one skill rather than forking into two, and the slug is what decides whether your next upload is a new skill or another version of an existing one.
+
+That has one consequence worth planning for: **you can change a skill's wording, its description and even its displayed name across versions, but not its slug.** A name that slugs differently is a different skill. Pick the slug you want before the first upload.
+
+Re-uploading is how you edit. Receipt compares content, not file names: identical content is a no-op that adds no version and reports nothing, and changed content becomes the next version, which is what new runs receive. See [Skills](/catalog/skills) for the version, enable, disable and delete lifecycle.
+
+## Writing one an agent will open
+
+Every enabled skill is mounted for a run and listed in a compact catalog carrying each skill's name, description, version, content hash and path. Mounting follows the run's authorization: runs started from chat, Slack and Teams carry your organization, while an objective started without an organization context — from the in-repo developer CLI, for example — receives no organization skills at all. The run's own context tells the agent so, in these words:
+
+> All enabled organization skills are mounted for this run and cataloged at `receipt/skills/index.json`; Codex chooses which catalog entries to load.
+
+Nothing ranks those entries or matches them to the request. One of Receipt's own skills, copied into every run, states the intended reading discipline — read the catalog, "select the smallest relevant set using the task, plan, and catalog metadata", do not read every `SKILL.md` merely because it is mounted, and read each selected file completely before acting on it. Nothing in the run's prompt points the agent at that file, so whether it follows the discipline on any given run is its decision, not a rule Receipt enforces.
+
+Four consequences for how you write the file:
+
+**The description is the routing surface.** With the name, it is the only part of the catalog entry that says what your skill is for. Write it as a trigger — when this skill applies, and to what — rather than as a summary. `Use when asked to produce or refresh the quarterly revenue report…` earns an open; `Notes about reporting` does not.
+
+**Keep one skill to one job.** A short file that gets opened is worth more than a manual that gets skipped, and the reading discipline above explicitly discourages loading everything.
+
+**Make it self-contained.** The catalog carries metadata only, and your upload is a single file, so anything the agent needs has to be in the body you wrote.
+
+**Do not ask a skill to change its own surroundings.** The mounted catalog is controller-owned and read-only; the skill that states that discipline also tells the agent never to edit it, copy it into a patch, or report it as its own output, and — whatever the agent does — a run rejects a patch that touches those paths.
+
+<Note>
+A skill is instructions, not permission. Task scope, the user's authorization and Receipt's execution constraints take precedence over anything a skill says, so a skill cannot widen what a run may do — write allowlists still decide that, per connection. See [tools and permissions](/mcp-gateway/tools-and-permissions).
+</Note>
+
+Enabling a skill puts it in front of new runs; it does not oblige the agent to use it, and no receipt records which skill was read. [Skills](/catalog/skills) explains what is and is not provable about a run's skill use.
+
+## If you generate the file from chat
+
+In the web app you can ask Beetle — the assistant's name in the interface — to write the file for you, review the draft it returns, and then — as an owner or admin — ask for it to be saved. [Using skills in chat](/co-worker/skills-in-chat) covers that conversation end to end. Two rules matter here, because they constrain the file rather than the flow:
+
+<Steps>
+<Step title="The generated name must already be a slug">
+A file you write by hand may use any display name and gets a slug derived from it. A generated one may not: its `name` has to be in lowercase-hyphen form already, or the save is refused with `Generated SKILL.md name must use lowercase-hyphen form.`
+</Step>
+
+<Step title="The generated frontmatter must contain exactly name and description">
+Unknown keys are tolerated in an uploaded file and rejected in a generated one: `Generated SKILL.md frontmatter must contain exactly name and description.` A draft over 262144 bytes — the same 256 KB ceiling — is rejected before you see it.
+</Step>
+</Steps>
+
+Everything else — the `---` boundaries, the 120- and 2,000-character limits, the slug rules — applies identically to both paths, because both go through the same parser.
+
+Next step: [see how much of all this your organization actually uses](/catalog/org-brain).

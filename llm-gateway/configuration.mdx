@@ -1,0 +1,212 @@
+---
+title: "Gateway configuration"
+description: "The environment variables on Receipt's model path, the exact failure each one produces, and what a refused model call returns."
+---
+
+The gateway needs very little to work: one server key that funds platform calls, one encryption key that protects the provider keys organizations save, and a short list of optional switches for strict mode, throttling, model defaults and spend margins. This page names every variable the model path actually reads, quotes the failure each one produces when it is wrong, and describes the envelope a refused call returns.
+
+There is no central environment schema in Receipt. Most modules validate lazily, so a wrong value usually surfaces as a runtime error on the feature you touched rather than at boot.
+
+<Warning>
+**The environment templates' "AI Model Access" section names two variables that nothing reads, and omits the one that matters.** `AI_GATEWAY_API_KEY` and `ANTHROPIC_API_KEY` are declared in both `apps/start/.env.example` and `apps/start/.env.self-host.example`, under a heading that calls them required for chat and title generation. No production code reads either: `ANTHROPIC_API_KEY` appears only in test stubs, and the single non-test reference to `AI_GATEWAY_API_KEY` **deletes** it from a sandbox environment before a background run starts. The variable that funds platform model calls is `OPENAI_API_KEY`, which neither template declares at all.
+</Warning>
+
+## The key that funds platform calls
+
+`OPENAI_API_KEY` is the server-side credential Receipt uses when a request is not paid for by an organization's own provider key. Four paths read it: a chat answer, the thread title generated on a first turn, attachment embedding, and a background Factory run authorized against platform credit. It is a process-level secret: only server modules read it, and it carries neither prefix the web build exposes to the client (`VITE_`, `ENABLE_`), so it is never inlined into the browser bundle. A platform-funded background run receives it inside its sandbox as a credentials file at `~/.codex/auth.json`, not as an environment variable. It is not the same thing as an organization key, which stays encrypted in the database. See [Bring your own key](/llm-gateway/bring-your-own-key) for the other half.
+
+Without it, a platform-funded chat turn fails before any provider is contacted:
+
+```
+Platform-funded OpenAI access is unavailable: OPENAI_API_KEY is not configured.
+```
+
+The stream never starts, so the user sees HTTP 502 and **"The AI provider is currently unavailable. Please retry."** A background run that has already reserved platform credit fails instead with:
+
+```
+Platform-funded OpenAI access is authorized, but OPENAI_API_KEY is unavailable.
+```
+
+Two more routing failures come from the same resolver, both when the model has no route for the credential in hand:
+
+```
+Selected model does not support platform OpenAI routing: {modelId}
+Selected model does not support organization provider routing: {modelId}
+```
+
+<Note>
+There is no platform-funded Anthropic route. Anthropic models execute only against an organization's own Anthropic key, and background runs are OpenAI-only. See [Models and providers](/llm-gateway/models-and-providers).
+</Note>
+
+## The BYOK wrapping key
+
+`BYOK_ENCRYPTION_KEY_B64` is the AES-256-GCM wrapping key for organization provider API keys. It must decode to exactly 32 bytes. The cipher uses a 12-byte IV and key version 1, and the key-resolution log line carries only a fingerprint of the provider key it resolved — the first twelve hex characters of its SHA-256 — never the key itself.
+
+```bash
+openssl rand -base64 32
+```
+
+It reports its own problems precisely:
+
+- `Missing required environment variable BYOK_ENCRYPTION_KEY_B64.`
+- `BYOK_ENCRYPTION_KEY_B64 must be valid base64.`
+- `BYOK_ENCRYPTION_KEY_B64 must decode to exactly 32 bytes.`
+- `Unsupported BYOK key version: {n}` when decrypting a row written under a different key version.
+
+Save and remove operations map failures to operator-facing strings: the missing-variable message above passes through unchanged, **"BYOK key storage is not initialized. Run the BYOK migration first."** covers an absent storage table, and **"BYOK persistence failed"** covers anything else. At request time, a key that cannot be decrypted does not fall back to platform credit — the turn ends as a 500 persistence error.
+
+<Warning>
+**Rotating this key destroys the data it protects. There is no way back.**
+
+There is no re-encryption routine anywhere in the codebase, and decryption hard-fails on any other key version. Rotating `BYOK_ENCRYPTION_KEY_B64` after organizations have saved provider keys makes every stored key permanently undecryptable — the only recovery is for each organization to re-enter its keys by hand. Generate it once, before the first key is saved, and store it where you will not lose it.
+</Warning>
+
+## Strict mode
+
+`CHAT_REQUIRE_BYOK` is compared literally against the string `true`; anything else, including unset, leaves it off. The cloud template ships `CHAT_REQUIRE_BYOK=false` with the comment "Optional strict mode. Set true only when every model request must use a workspace-managed provider key instead of the platform-credit gateway."
+
+Normally, when the organization's stored provider-key snapshot says no key exists, credential resolution stops there and the turn runs on platform credit. Strict mode skips that short-circuit and turns a missing key into a 403 carrying **"This provider requires an organization API key, but no key is configured."**
+
+That snapshot is only trusted once it has been written at least once. An organization whose policy row still carries the schema default is never short-circuited, and falls through to the per-scope key lookup regardless of this setting.
+
+<Note>
+This is the only "require a key" control that runs. The **Require organization provider key** toggle on the compliance screen is not enforced server-side; its only reader is a client-side filter over a model list that the composer does not currently mount. See [Model policy](/llm-gateway/model-policy).
+</Note>
+
+## Throttling
+
+<Warning>
+**`VITE_DISABLE_REDIS=true` turns the per-user request limit off entirely**, alongside chat stream resume. The limiter is a fixed-window counter in Postgres and does not itself use Redis, but this flag swaps in a disabled layer whose check always returns allowed. The cloud environment template ships `VITE_DISABLE_REDIS=true`, described there only as "Disable Redis for stream resume (use in-memory fallback, Intended for Dev Environment)." — the effect on throttling is not mentioned.
+</Warning>
+
+The limit is per signed-in user, not per organization and not per key. There is no token budget anywhere; dollar-denominated budgets are covered in [Usage and spend](/llm-gateway/usage-and-spend).
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `PAID_CHAT_RATE_LIMIT_WINDOW_MS` | `60000` | Length of the fixed window |
+| `PAID_CHAT_RATE_LIMIT_MAX_REQUESTS` | `30` | Requests one user may make per window |
+| `FREE_CHAT_RATE_LIMIT_WINDOW_MS` / `_MAX_REQUESTS` | `60000` / `10` | Free-tier window, never reached in this release |
+| `FREE_CHAT_ALLOWANCE_WINDOW_MS` / `_MAX_REQUESTS` | `86400000` / `100` | Free-tier daily allowance, never reached in this release |
+
+Each must be a positive integer or resolution throws `Expected {NAME} to be a positive integer`. Every request is treated as a paid-tier request in this release, so only the two `PAID_` values ever apply.
+
+## Model defaults
+
+Each variable below is an override; unset, the identifier in the second column is used.
+
+| Variable | Default | Used for |
+| --- | --- | --- |
+| `CHAT_TITLE_GENERATION_MODEL` | `openai/gpt-5-mini` | The thread title generated on a first turn |
+| `CHAT_RECEIPT_RECAP_MODEL` | `openai/gpt-5-mini` | The recap shown in the Replay dialog |
+| `OPENAI_MODEL` | `gpt-5.6-luna` | Generic runtime OpenAI calls |
+| `RECEIPT_FACTORY_CHAT_MODEL` | `OPENAI_MODEL`, then `gpt-5.4-mini` | The runtime's chat lane |
+| `RECEIPT_FACTORY_TASK_MODEL` | `gpt-5.6-luna` | Factory task workers |
+| `RECEIPT_FACTORY_OBJECTIVE_SUPERVISOR_MODEL`, then `RECEIPT_FACTORY_SUPERVISOR_MODEL` | `gpt-5.6-terra` | The objective supervisor's planning and evidence decisions |
+| `RECEIPT_FACTORY_PLATFORM_CODEX_MODEL` | `gpt-5.6-luna` | Pinned model for platform-funded sandbox runs |
+| `RECEIPT_FACTORY_PLATFORM_SUPERVISOR_MODEL` | `gpt-5.6-luna` | Supervisor model for platform-funded runs |
+
+The two chat-side variables take a catalog model id — the defaults carry the `openai/` prefix — while the runtime and Factory variables take a bare provider model name. Name a model the catalog does not know and resolution is denied with the machine reason `unknown_model`; name one the catalog knows but the gateway cannot route, and the call fails with a 502 instead.
+
+<Note>
+Both templates' comment on `CHAT_TITLE_GENERATION_MODEL` says that title generation "follows the thread model" when the variable is unset. It does not: the resolver ignores the thread model it is passed and uses the default above.
+
+The Replay recap is the one model call that never falls back to platform credit. It resolves an organization key for the provider implied by the model id, gives up after 20 seconds and does not retry; with no key the dialog reads **"Connect a `{OpenAI|Anthropic}` key in organization settings to generate AI summaries."**
+</Note>
+
+Retry behaviour for the runtime's OpenAI adapter: `OPENAI_MAX_RETRIES` (default `3`) and `OPENAI_RETRY_BASE_MS` (default `500`) drive exponential backoff capped at 8 seconds plus jitter, and **only rate-limit failures are retried** — a 401 or an invalid key is permanent. `RECEIPT_OPENAI_KEY_DEBUG_MODE` (default `masked`) controls the adapter's `openai.key.debug` line: `off` suppresses it, `masked` prints a fingerprint plus a truncated preview, and `full` also prints the whole key. Leave it at `masked`.
+
+## Spend and cost visibility
+
+`WORKSPACE_USAGE_TARGET_MARGIN_PERCENT` is the margin applied when a paid plan's seat budget is built, and it is required on a cloud instance — the first paid-plan policy resolution throws `Missing WORKSPACE_USAGE_TARGET_MARGIN_PERCENT` when it is absent. Per-plan overrides take precedence when set: `WORKSPACE_USAGE_PLUS_TARGET_MARGIN_PERCENT`, and the same shape for `PRO`, `SCALE` and `ENTERPRISE`. A value must parse as a number between 0 and 100, or you get `Invalid numeric value for {NAME}` or `Expected {NAME} to be between 0 and 100`.
+
+`ALLOW_USER_COST_DISPLAY` defaults to `false` and decides whether a turn's cost is exposed to the person who sent it. A turn paid for with an organization's own key exposes its cost regardless of this flag.
+
+## What a refused call returns
+
+Every chat API failure returns the same envelope, at the status in the table below:
+
+```json
+{
+  "ok": false,
+  "error": {
+    "code": "error_chat_model_not_allowed",
+    "i18nKey": "error_chat_model_not_allowed",
+    "requestId": "{requestId}",
+    "retryable": false
+  },
+  "requestId": "{requestId}",
+  "telemetry": { "owner": "server" },
+  "details": {
+    "tag": "ModelPolicyDeniedError",
+    "message": "Selected model is not allowed for this request",
+    "threadId": "{threadId}"
+  }
+}
+```
+
+`error.code` is a stable transport code, `error.i18nKey` selects the sentence the client renders, and `details.tag` is the server-side error class. `retryable` is set from the failure class alone, not from anything about your configuration.
+
+| Failure | HTTP | `error.code` | `retryable` | What the user sees |
+| --- | --- | --- | --- | --- |
+| Rate limit exceeded | 429 | `error_chat_rate_limited` | `true` | "Too many requests. Please wait about `{retryAfterSeconds}` seconds and retry." |
+| Seat allowance exhausted | 429 | `error_chat_quota_exceeded` | `true` | "This seat has exhausted its current AI usage allowance. Please wait until the monthly reset and try again." |
+| Platform credit exhausted | 429 | `error_chat_quota_exceeded` | `true` | "Your $5 platform credit has been used. Add an optional provider key in Billing & Credits to continue without platform credit." |
+| Model policy denial | 403 | `error_chat_model_not_allowed` | `false` | One of the sentences in the machine-reason table below |
+| Prompt over the context window | 413 | `error_chat_context_window_exceeded` | `false` | "This conversation has reached its current context limit (`{maxTokens}` tokens). Start a new chat to continue." |
+| Stream never started, including an unroutable model | 502 | `error_chat_provider_unavailable` | `true` | "The AI provider is currently unavailable. Please retry." |
+| Provider rejected the key mid-stream | 502 | `error_chat_provider_key_invalid` | `false` | "Unable to connect to the AI service. Verify that your organization OpenAI API key is valid." |
+| Any other stream transport failure | 502 | `error_chat_stream_failed` | `true` | "The response stream failed. Please retry." |
+| Message could not be saved | 500 | `error_chat_persistence_failed` | `false` | "Your message could not be saved. Please retry." |
+
+Three details worth knowing before you build anything against this envelope:
+
+- **No `Retry-After` header is set.** The retry hint travels as `error.i18nParams.retryAfterSeconds`.
+- **Code and i18n key can differ.** Platform-credit exhaustion returns the code `error_chat_quota_exceeded` but the key `error_chat_platform_credit_exhausted`; a denial returns the code `error_chat_model_not_allowed` with one of `error_chat_model_not_allowed`, `error_chat_provider_key_missing`, `error_chat_provider_model_key_incompatible` or `error_chat_model_requires_paid_plan`. Branch on the key, not the code.
+- **In standard context mode the key changes**, to `error_chat_context_window_exceeded_max_available`: "This conversation has reached the standard context limit (`{maxTokens}` tokens). Switch to Max to continue with the larger window."
+
+<Note>
+The platform-credit sentence tells users to go to "Billing & Credits". No page has that name — the settings rail item and page title are both **Billing**.
+</Note>
+
+## Machine reasons behind a 403
+
+A denial carries a machine reason internally. The reason picks the sentence the user reads and decides whether the failure is reported to error tracking, but it stays inside the server: it is not part of the envelope, and the wide event emitted for the request records the error tag, code and i18n key rather than the reason string. Use `error.i18nKey` to tell denials apart from the outside.
+
+| Reason | Raised when | Sentence shown |
+| --- | --- | --- |
+| `no_model_selected` | Neither the chat mode, the request, nor the thread names a model | "The selected AI model is not allowed for your organization." |
+| `unknown_model` | The model id is not in the catalog | Same as above |
+| `policy_denied:provider` | The model's provider is on the organization's disabled list | Same as above |
+| `policy_denied:model` | The model itself is on the disabled list | Same as above |
+| `policy_denied:compliance` | The organization requires zero data retention and the model does not offer it | Same as above |
+| `policy_denied:missing_org_context_for_provider_key` | Strict mode is on and the request has no organization context | Same as above |
+| `policy_denied:provider_not_supported_by_byok:{providerId}` | Strict mode is on and no executable route for the model accepts an organization key | Same as above |
+| `policy_denied:missing_provider_api_key:{providerId}` | Strict mode is on and no key is stored for the last routable provider | "This provider requires an organization API key, but no key is configured." |
+| `free_tier_model_denied:{modelId}` | Plan-based model gating denies the model | "This model requires a paid plan to use." |
+
+Denials are additive: when a provider, a model and a compliance flag all rule a request out, the reason joins them with commas, as in `policy_denied:provider,model,compliance`.
+
+<Note>
+`free_tier_model_denied` cannot fire in this release — plan-based model access always resolves to allowed. The classifier also still recognises a `model_not_supported_for_provider_key` reason and maps it to "This model cannot be used with your organization provider API key. Choose another model from that provider or remove the provider key.", but no code path emits that reason today; the equivalent case is reported as `policy_denied:provider_not_supported_by_byok`.
+</Note>
+
+## Self-hosted differences
+
+A self-hosted build sets `VITE_APP_INSTANCE_MODE=self_hosted`, which changes what the gateway charges for and what it requires.
+
+| Behaviour | Cloud | Self-hosted |
+| --- | --- | --- |
+| New organization's platform credit | $5 signup grant | none |
+| Usage reservations and seat budgets | enforced before every model call | disabled |
+| `WORKSPACE_USAGE_*_TARGET_MARGIN_PERCENT` | required once a paid plan's policy is built | not read at all |
+| `OPENAI_API_KEY` | funds any request without an organization key | still required for anything an organization key does not cover |
+| `ALLOW_USER_COST_DISPLAY` | template ships `false` | self-host template ships `true` |
+| `VITE_DISABLE_REDIS` | template ships `true` | self-host template ships `false` |
+| `VITE_ENABLE_EMBEDDING` | template ships `true` | self-host template ships `false`, so no embedding calls are made |
+| Organization settings access | owner and admin only | unchanged |
+
+Bringing your own key is optional on a self-hosted instance in the same sense as on cloud: without one, requests fall through to whatever `OPENAI_API_KEY` you configured on the server. What changes is that nothing meters or reserves against a credit balance first.
+
+For the variables outside the model path — identity, database, storage, email and the runtime's job settings — see [Configuration, secrets, and keys](/core/configuration).
+
+Next step: [return to the LLM Gateway overview](/llm-gateway/overview) for how the pieces on this page fit together.

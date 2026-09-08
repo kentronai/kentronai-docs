@@ -1,29 +1,39 @@
 ---
-title: "Signing in with receipt setup"
-description: "What receipt setup does and does not do, the browser device login step by step, and the session file and twelve-hour token it leaves behind."
+title: "Sign in: setup, login, and logout"
+description: "Sign the released CLI in with one command and a browser approval, and understand the session file and twelve-hour token it leaves behind."
 ---
 
-`receipt setup` is how you sign the released CLI in. It is also reachable as `receipt connect setup`. The similarly named `receipt connect doctor` and `receipt connect check` no longer run setup — they run the read-only [`receipt doctor`](/cli/doctor), which resolves your endpoint and reports the saved session without ever opening a browser.
+Signing in takes one command and one browser approval. Run `receipt setup`, approve the CLI in the page that opens, and every other command — `receipt workspace`, `receipt tools`, `receipt mcp`, `receipt connect` — has an identity to work with. It stays signed in for twelve hours.
 
-## What it actually does
+## Three commands, one session
+
+| Command | What it does |
+|---|---|
+| `receipt setup` | Signs you in, installs the Claude observer when the companion binary is present, then prints your account, the connector catalog and the observer state |
+| `receipt login` | The sign-in step alone — no connector summary, no observer install |
+| `receipt logout` | Deletes the saved session for the target you are signed in to |
+
+All three also work with a leading `connect`, so `receipt connect setup` and `receipt setup` are the same command. The similarly named `receipt connect doctor` and `receipt connect check` do **not** run setup — they run the read-only [`receipt doctor`](/cli/doctor), which resolves your endpoint and reports the saved session without ever opening a browser.
+
+For the hosted app there is nothing to configure — the binary resolves `app.kentron.ai` on its own, so a plain `receipt setup` on a fresh machine signs you straight in. You only pass a host when you are pointing at a dev or self-hosted origin; see [Install the CLI](/cli/install).
+
+## What setup actually does
 
 Exactly two things, in order:
 
 1. **Signs you in.** It resolves which host to talk to, reuses a saved session if one matches and is still valid, and otherwise runs the browser device login below and writes a new session file.
-2. **Installs the Claude observer**, but only when the companion binary can be found. If it cannot, the step is reported as skipped with the reason — it is not an error and it does not stop sign-in.
-
-Then it prints your account line, the connector catalog, and the observer state.
+2. **Installs the Claude observer**, but only when the companion binary can be found. The current release does not ship that companion, so on a freshly installed CLI the step reports itself as not installed and names the reason. That is not an error and it does not stop sign-in — see [Observing and importing Claude Code activity](/cli/observe-claude-code).
 
 <Warning>
 `receipt setup` does **not** start provider onboarding. It signs you in and installs the observer, nothing more. Onboarding a provider is [`receipt connect`](/cli/connect).
 </Warning>
 
-For the hosted app there is nothing to configure — the binary resolves `https://app.kentron.ai` on its own, so a plain `receipt setup` on a fresh machine signs you straight in. You only pass a host when you are pointing at a dev or self-hosted origin; see [Install the CLI](/cli/install).
-
 ## Flags
 
+`setup` and `login` take the same endpoint and sign-in flags.
+
 <ParamField path="--target" type="prod | dev | local | http(s) URL" default="prod">
-Which endpoint to use. An `http://` or `https://` value, like `--server-url`, produces a `custom` target. Anything else fails with `receipt connect target must be prod, dev, local, or an http(s) URL`.
+Which endpoint to use. An `http://` or `https://` value, like `--server-url`, produces a `custom` target. Anything else fails with `receipt connect target must be prod, dev, local, or an http(s) URL` — and it fails even when you also passed `--server-url`, because the target word is validated before the override is applied.
 </ParamField>
 
 <ParamField path="--server-url" type="url">
@@ -43,21 +53,21 @@ Skip sign-in entirely; the account line then reads `Receipt account: not connect
 </ParamField>
 
 <ParamField path="--no-claude" type="boolean" default="false">
-Skip the Claude observer install. Aliases: `--no-observer`, `--no-background`, `--skip-claude`.
+Skip the Claude observer install. `setup` only. Aliases: `--no-observer`, `--no-background`, `--skip-claude`.
 </ParamField>
 
 <ParamField path="--no-open" type="boolean">
-Print the sign-in URL instead of opening a browser. Setting `RECEIPT_CONNECT_OPEN_BROWSER=0` in the environment does the same.
+Print the sign-in URL instead of opening a browser. `--open=false` does the same, and so does setting `RECEIPT_CONNECT_OPEN_BROWSER=0` in the environment.
 </ParamField>
 
 <ParamField path="--json" type="boolean" default="false">
-Return a structured envelope instead of the status lines.
+Return a structured envelope instead of the status lines. It also suppresses the `Step 1 of 2` progress lines.
 </ParamField>
 
 Observer flags such as `--proxy-bin <path>`, `--mode` and `--event-log` are passed through to the observer install step.
 
 <Note>
-`--no-open` is a boolean, and this binary's flag parser lets a boolean swallow the next word. `receipt setup --no-open --json` is fine; `receipt setup --no-open` followed by another bare word is not. See [the parsing rules](/cli/overview).
+`--no-open` is a boolean, and this binary's flag parser lets a boolean swallow the next word. `receipt setup --no-open --json` is fine; `receipt setup --no-open` followed by another bare word is not. Use `--open=false` if you need the flag anywhere but last. See [the parsing rules](/cli/overview).
 </Note>
 
 ## Session reuse
@@ -78,7 +88,7 @@ Whichever way it resolves, the session for the target you set up is promoted to 
 <Step title="The CLI asks for a code">
 It prints `Starting Receipt Connect sign-in at <authUrl>...` and posts a start request to `<authUrl>/api/receipt-connect/cli-login`, with a 15-second timeout.
 
-The server rate-limits this: at most 10 starts per 60 seconds per client IP, and at most 3 requests pending at once. Over either limit it answers HTTP 429 with `{"error":"rate_limited","retryAfter":60}`, and the CLI reports `receipt connect device login failed to start: rate_limited`.
+The server rate-limits this: at most 10 starts per 60 seconds per client IP, and at most 3 sign-ins pending at once. Over either limit it answers HTTP 429 with `{"ok":false,"error":"rate_limited","retryAfter":60}`, and the CLI reports `receipt connect device login failed to start: rate_limited`.
 </Step>
 
 <Step title="You get a code good for ten minutes">
@@ -113,7 +123,33 @@ On success the CLI prints `Receipt sign-in approved.` and writes the session fil
 </Step>
 </Steps>
 
-Other failures you may see from this step: `receipt connect device login request failed for <url>: <message>` for a network or timeout problem, `receipt connect device login failed to start: http_404` when the auth URL is not the web application, `receipt connect device login returned an empty token`, and `receipt connect login did not return a workspace; select a Receipt workspace and try again`.
+Other failures you may see from this step: `receipt connect device login request failed for <url>: <message>` for a network or timeout problem, `receipt connect device login failed to start: http_404` when the auth URL is not the web application, `receipt connect device login returned an empty token`, and `receipt connect login did not return a workspace; select a Receipt workspace and try again`. Every one of them, with its cause and fix, is in [CLI troubleshooting](/cli/troubleshooting).
+
+## Signing in only, with receipt login
+
+`receipt login` runs the sign-in step above and stops there: no connector catalog, no observer install. Use it when you are switching environments or refreshing an expired token and do not want the rest of setup's work.
+
+It takes an optional positional target, so these are equivalent:
+
+```bash
+receipt login local
+receipt login --target local
+receipt login https://<your-receipt-host>
+```
+
+Session reuse works exactly as it does for `setup`. On success it prints three lines:
+
+```
+receipt login: signed in <email> for workspace Default (<workspaceId>)
+receipt login: gateway https://<your-receipt-host>
+receipt login: saved ~/.receipt/session.json
+```
+
+The first line reads `already signed in` instead of `signed in` when it reused a saved session. With `--json` you get `ok`, `reused`, the target and gateway URL, the identity fields, and both session file paths.
+
+<Note>
+`login` honours setup's skip flags. `receipt login --no-login` prints `receipt login: skipped (disabled by setup flag)` and exits 0 without signing you in.
+</Note>
 
 ## What gets written to disk
 
@@ -121,6 +157,8 @@ The active session is `~/.receipt/session.json`. The directory is created with m
 
 - `RECEIPT_CLI_CONFIG_DIR` moves the whole directory.
 - `RECEIPT_CLI_SESSION_FILE` sets the exact path of the active session file, and suppresses the per-target files entirely.
+
+Those two are the only variables that change where sign-in writes; the full set the binary reads is in [Environment and exit codes](/cli/environment-and-exit-codes).
 
 Alongside the active file, `prod`, `dev` and `local` targets each get their own copy: `session.prod.json`, `session.dev.json`, `session.local.json`. A `custom` target — anything reached through a URL or `--server-url` — writes **no** per-target file, only the active one.
 
@@ -144,7 +182,19 @@ The session file is not secret-free. It stores a live bearer token in the clear,
 
 A file missing `gatewayUrl`, `token` or `organizationId`, or one that will not parse, is treated as no session at all rather than as an error.
 
-To sign out, run [`receipt logout`](/cli/overview) — it deletes the active `session.json` and its matching per-target file, and prints `receipt logout: not signed in` when there was nothing to remove. Deleting the files by hand still works too.
+## Signing out, with receipt logout
+
+`receipt logout` reads the active session, deletes it and the per-target file for that same target, and prints:
+
+```
+receipt logout: signed out <email> from https://<your-receipt-host>
+```
+
+With nothing to remove it prints `receipt logout: not signed in` and still exits 0. It reads no flags — there is no `--target`, so it always acts on whichever session is currently active. Sessions for other targets are left in place, which is what makes `receipt setup --target local` a safe way to come back to a local stack without losing your hosted sign-in. Deleting the files by hand works too.
+
+<Warning>
+Signing out is local. It removes the files; it does not revoke the token at the gateway, so a copy of that token stays usable until it expires. Treat a leaked session file as live credentials for up to twelve hours.
+</Warning>
 
 ## The token: twelve hours, three scopes, one workspace
 
@@ -160,7 +210,7 @@ The token is good for 12 hours. Once it expires, gateway calls fail with `unauth
 
 `setup` also exports the session's values — gateway URL, token, organization, workspace and user id — as environment variables into its own process, and only its own process. They are not exported to your shell.
 
-## What it prints
+## What setup prints
 
 ```
 Receipt account: connected to workspace Default (<workspaceId>)
@@ -171,7 +221,7 @@ Receipt Connect connectors:
 Claude observer: not installed (Unable to find the Claude observer companion binary. Install a Receipt CLI release that bundles receipt-claude-proxy, or pass --proxy-bin <path> / set RECEIPT_CLAUDE_PROXY_BIN.)
 ```
 
-The connector list is the whole catalog, not the connectors you have connected. To see actual connections, use `receipt connect status`.
+The connector list is the whole catalog — all 63 connectors — not the connectors you have connected. To see actual connections, use [`receipt connect status`](/cli/connect).
 
 The observer line reads `Claude observer: installed (<platform> <serviceFile>)` when the companion binary was found and the background service installed.
 

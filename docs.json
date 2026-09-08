@@ -2,7 +2,7 @@
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
   "name": "Kentron",
-  "description": "Documentation for Receipt on the Kentron platform.",
+  "description": "Documentation for the Kentron platform: Receipt AI Co-Worker, MCP Gateway, LLM Gateway, Kentron Catalog, Kentron Guard, Kentron Core, and the Receipt CLI.",
   "colors": {
     "primary": "#0D9373",
     "light": "#07C983",
@@ -16,182 +16,87 @@
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Receipt AI Co-Worker",
+        "icon": "comments",
         "groups": [
-          {
-            "group": "Start here",
-            "pages": [
-              "introduction",
-              "getting-started/your-account",
-              "getting-started/your-first-chat",
-              "getting-started/connect-an-app",
-              "getting-started/background-runs",
-              "getting-started/receipts-and-replay"
-            ]
-          },
-          {
-            "group": "Working with Receipt",
-            "pages": [
-              "guides/files-and-attachments",
-              "guides/managing-conversations",
-              "guides/errors-and-limits",
-              "guides/monitoring-your-runs"
-            ]
-          },
-          {
-            "group": "Channels and help",
-            "pages": [
-              "guides/receipt-in-slack",
-              "guides/getting-help"
-            ]
-          }
+          { "group": "Welcome to Kentron", "pages": ["introduction"] },
+          { "group": "Get started", "pages": ["co-worker/overview", "co-worker/your-first-chat", "co-worker/background-runs", "co-worker/replay"] },
+          { "group": "Working with Receipt", "pages": ["co-worker/skills-in-chat", "co-worker/conversations", "co-worker/files-and-attachments", "co-worker/monitoring"] },
+          { "group": "Channels", "pages": ["co-worker/slack", "co-worker/teams"] },
+          { "group": "How it works", "pages": ["co-worker/how-it-works", "co-worker/objectives-and-tasks"] },
+          { "group": "Reference", "pages": ["co-worker/errors-and-limits"] }
         ]
       },
       {
-        "tab": "Platform",
+        "tab": "MCP Gateway",
+        "icon": "plug",
         "groups": [
-          {
-            "group": "Accounts and tenancy",
-            "pages": [
-              "platform/organizations-and-workspaces",
-              "platform/members-roles-and-invitations"
-            ]
-          },
-          {
-            "group": "Models and keys",
-            "pages": [
-              "platform/model-policy",
-              "platform/bring-your-own-key"
-            ]
-          },
-          {
-            "group": "Organization controls",
-            "pages": [
-              "platform/guardrails",
-              "platform/organization-skills-and-knowledge",
-              "platform/usage-and-billing"
-            ]
-          },
-          {
-            "group": "Connected apps",
-            "pages": [
-              "platform/integrations",
-              "platform/connection-scopes",
-              "platform/manage-tools-and-permissions",
-              "platform/mcp-gateway"
-            ]
-          },
-          {
-            "group": "Data and trust",
-            "pages": [
-              "platform/data-handling-and-security"
-            ]
-          }
+          { "group": "Get started", "pages": ["mcp-gateway/overview", "mcp-gateway/quickstart", "mcp-gateway/connect-an-app"] },
+          { "group": "Concepts", "pages": ["mcp-gateway/workspaces", "mcp-gateway/connection-scopes", "mcp-gateway/receipt-connect"] },
+          { "group": "Tools and permissions", "pages": ["mcp-gateway/tools-and-permissions", "mcp-gateway/aggregate-server"] },
+          { "group": "Operate", "pages": ["mcp-gateway/gateway-activity", "mcp-gateway/security-model", "mcp-gateway/troubleshooting"] }
         ]
       },
       {
-        "tab": "CLI",
+        "tab": "LLM Gateway",
+        "icon": "microchip",
         "groups": [
-          {
-            "group": "The released CLI",
-            "pages": [
-              "cli/overview",
-              "cli/install",
-              "cli/setup",
-              "cli/doctor",
-              "cli/workspaces",
-              "cli/connect",
-              "cli/tools-and-mcp",
-              "cli/observe-claude-code"
-            ]
-          }
+          { "group": "Get started", "pages": ["llm-gateway/overview", "llm-gateway/models-and-providers", "llm-gateway/bring-your-own-key"] },
+          { "group": "Policy and spend", "pages": ["llm-gateway/model-policy", "llm-gateway/usage-and-spend"] },
+          { "group": "Reference", "pages": ["llm-gateway/configuration"] }
         ]
       },
       {
-        "tab": "Developers",
+        "tab": "Kentron Catalog",
+        "icon": "book-open",
         "groups": [
-          {
-            "group": "Platform architecture",
-            "pages": [
-              "develop/architecture",
-              "develop/receipts-and-streams",
-              "develop/jobs-and-durable-execution"
-            ]
-          },
-          {
-            "group": "APIs and SDK",
-            "pages": [
-              "develop/runtime-api",
-              "develop/typescript-sdk"
-            ]
-          }
+          { "group": "Get started", "pages": ["catalog/overview"] },
+          { "group": "What is in the catalog", "pages": ["catalog/agent-registry", "catalog/connectors", "catalog/skills", "catalog/writing-a-skill", "catalog/org-brain"] }
         ]
       },
       {
-        "tab": "Self-hosting",
+        "tab": "Kentron Guard",
+        "icon": "shield-halved",
         "groups": [
-          {
-            "group": "Before you start",
-            "pages": [
-              "self-hosting/overview"
-            ]
-          },
-          {
-            "group": "Configure",
-            "pages": [
-              "self-hosting/configuration",
-              "self-hosting/database-and-migrations",
-              "self-hosting/integrations-provider"
-            ]
-          },
-          {
-            "group": "Deploy",
-            "pages": [
-              "self-hosting/deploying"
-            ]
-          }
+          { "group": "Get started", "pages": ["guard/overview"] },
+          { "group": "Controls", "pages": ["guard/guardrails", "guard/policies", "guard/access-control"] },
+          { "group": "Proof and data", "pages": ["guard/receipts-and-audit", "guard/data-handling-and-security"] }
         ]
       },
       {
-        "tab": "Working from source",
+        "tab": "Kentron Core",
+        "icon": "layer-group",
         "groups": [
-          {
-            "group": "Running the repository",
-            "pages": [
-              "repo/local-development"
-            ]
-          },
-          {
-            "group": "The in-repo CLI",
-            "pages": [
-              "repo/in-repo-cli",
-              "repo/receipts-and-jobs-commands"
-            ]
-          },
-          {
-            "group": "Factory",
-            "pages": [
-              "repo/factory-overview",
-              "repo/factory-cli-reference"
-            ]
-          },
-          {
-            "group": "Building on Receipt",
-            "pages": [
-              "repo/authoring-agents",
-              "repo/testing-and-simulation"
-            ]
-          }
+          { "group": "Overview", "pages": ["core/overview"] },
+          { "group": "Accounts and organizations", "pages": ["core/your-account", "core/organizations-and-workspaces", "core/members-and-roles", "core/billing-and-plans"] },
+          { "group": "Architecture", "pages": ["core/architecture", "core/receipts-and-streams", "core/jobs-and-durable-execution", "core/factory-engine"] },
+          { "group": "APIs and SDK", "pages": ["core/runtime-api", "core/typescript-sdk", "core/authoring-agents"] },
+          { "group": "Configure", "pages": ["core/configuration"] },
+          { "group": "Run it yourself", "pages": ["core/local-development", "core/local-development-troubleshooting", "core/self-hosting", "core/database-and-migrations", "core/integrations-provider", "core/deploying", "core/health-and-observability"] },
+          { "group": "Help", "pages": ["core/getting-help"] }
+        ]
+      },
+      {
+        "tab": "Receipt CLI",
+        "icon": "terminal",
+        "groups": [
+          { "group": "Get started", "pages": ["cli/overview", "cli/install", "cli/quickstart", "cli/setup", "cli/doctor"] },
+          { "group": "Commands", "pages": ["cli/workspaces", "cli/connect", "cli/tools-and-mcp", "cli/observe-claude-code", "cli/command-reference"] },
+          { "group": "Reference", "pages": ["cli/environment-and-exit-codes", "cli/troubleshooting"] },
+          { "group": "Developer CLI (from source)", "pages": ["cli/from-source/overview", "cli/from-source/receipts-and-jobs", "cli/from-source/factory-overview", "cli/from-source/factory-reference", "cli/from-source/testing-and-simulation"] }
         ]
       }
-    ]
+    ],
+    "global": {
+      "anchors": [
+        { "anchor": "Open Receipt", "href": "https://app.kentron.ai", "icon": "arrow-up-right-from-square" },
+        { "anchor": "GitHub", "href": "https://github.com/kentronai", "icon": "github" }
+      ]
+    }
   },
   "navbar": {
     "links": [
-      {
-        "label": "Contact Us",
-        "href": "mailto:feedback@kentron.ai"
-      }
+      { "label": "Contact Us", "href": "mailto:feedback@kentron.ai" }
     ]
   },
   "footer": {
@@ -201,53 +106,63 @@
     }
   },
   "redirects": [
-    {
-      "source": "/user-guide",
-      "destination": "/getting-started/your-first-chat"
-    },
-    {
-      "source": "/quickstart",
-      "destination": "/getting-started/your-account"
-    },
-    {
-      "source": "/development",
-      "destination": "/repo/local-development"
-    },
-    {
-      "source": "/connector",
-      "destination": "/platform/integrations"
-    },
-    {
-      "source": "/connectors/:slug*",
-      "destination": "/platform/integrations"
-    },
-    {
-      "source": "/regulations",
-      "destination": "/platform/data-handling-and-security"
-    },
-    {
-      "source": "/regulation/:slug*",
-      "destination": "/platform/data-handling-and-security"
-    },
-    {
-      "source": "/data-classification",
-      "destination": "/platform/data-handling-and-security"
-    },
-    {
-      "source": "/search",
-      "destination": "/guides/managing-conversations"
-    },
-    {
-      "source": "/support/contact-us",
-      "destination": "/guides/getting-help"
-    },
-    {
-      "source": "/essentials/:slug*",
-      "destination": "/introduction"
-    },
-    {
-      "source": "/api-reference/:slug*",
-      "destination": "/develop/runtime-api"
-    }
+    { "source": "/getting-started/your-account", "destination": "/core/your-account" },
+    { "source": "/getting-started/your-first-chat", "destination": "/co-worker/your-first-chat" },
+    { "source": "/getting-started/connect-an-app", "destination": "/mcp-gateway/connect-an-app" },
+    { "source": "/getting-started/background-runs", "destination": "/co-worker/background-runs" },
+    { "source": "/getting-started/receipts-and-replay", "destination": "/co-worker/replay" },
+    { "source": "/guides/files-and-attachments", "destination": "/co-worker/files-and-attachments" },
+    { "source": "/guides/managing-conversations", "destination": "/co-worker/conversations" },
+    { "source": "/guides/errors-and-limits", "destination": "/co-worker/errors-and-limits" },
+    { "source": "/guides/monitoring-your-runs", "destination": "/co-worker/monitoring" },
+    { "source": "/guides/receipt-in-slack", "destination": "/co-worker/slack" },
+    { "source": "/guides/getting-help", "destination": "/core/getting-help" },
+    { "source": "/platform/organizations-and-workspaces", "destination": "/core/organizations-and-workspaces" },
+    { "source": "/platform/members-roles-and-invitations", "destination": "/core/members-and-roles" },
+    { "source": "/platform/model-policy", "destination": "/llm-gateway/model-policy" },
+    { "source": "/platform/bring-your-own-key", "destination": "/llm-gateway/bring-your-own-key" },
+    { "source": "/platform/guardrails", "destination": "/guard/guardrails" },
+    { "source": "/platform/organization-skills-and-knowledge", "destination": "/catalog/skills" },
+    { "source": "/platform/usage-and-billing", "destination": "/llm-gateway/usage-and-spend" },
+    { "source": "/platform/integrations", "destination": "/mcp-gateway/receipt-connect" },
+    { "source": "/platform/connection-scopes", "destination": "/mcp-gateway/connection-scopes" },
+    { "source": "/platform/manage-tools-and-permissions", "destination": "/mcp-gateway/tools-and-permissions" },
+    { "source": "/platform/mcp-gateway", "destination": "/mcp-gateway/aggregate-server" },
+    { "source": "/platform/data-handling-and-security", "destination": "/guard/data-handling-and-security" },
+    { "source": "/develop/architecture", "destination": "/core/architecture" },
+    { "source": "/develop/receipts-and-streams", "destination": "/core/receipts-and-streams" },
+    { "source": "/develop/jobs-and-durable-execution", "destination": "/core/jobs-and-durable-execution" },
+    { "source": "/develop/runtime-api", "destination": "/core/runtime-api" },
+    { "source": "/develop/typescript-sdk", "destination": "/core/typescript-sdk" },
+    { "source": "/self-hosting/overview", "destination": "/core/self-hosting" },
+    { "source": "/self-hosting/configuration", "destination": "/core/configuration" },
+    { "source": "/self-hosting/database-and-migrations", "destination": "/core/database-and-migrations" },
+    { "source": "/self-hosting/integrations-provider", "destination": "/core/integrations-provider" },
+    { "source": "/self-hosting/deploying", "destination": "/core/deploying" },
+    { "source": "/repo/local-development", "destination": "/core/local-development" },
+    { "source": "/repo/in-repo-cli", "destination": "/cli/from-source/overview" },
+    { "source": "/repo/receipts-and-jobs-commands", "destination": "/cli/from-source/receipts-and-jobs" },
+    { "source": "/repo/factory-overview", "destination": "/cli/from-source/factory-overview" },
+    { "source": "/repo/factory-cli-reference", "destination": "/cli/from-source/factory-reference" },
+    { "source": "/repo/authoring-agents", "destination": "/core/authoring-agents" },
+    { "source": "/repo/testing-and-simulation", "destination": "/cli/from-source/testing-and-simulation" },
+    { "source": "/getting-started/:slug*", "destination": "/co-worker/your-first-chat" },
+    { "source": "/guides/:slug*", "destination": "/co-worker/overview" },
+    { "source": "/platform/:slug*", "destination": "/core/organizations-and-workspaces" },
+    { "source": "/develop/:slug*", "destination": "/core/architecture" },
+    { "source": "/self-hosting/:slug*", "destination": "/core/self-hosting" },
+    { "source": "/repo/:slug*", "destination": "/cli/from-source/overview" },
+    { "source": "/user-guide", "destination": "/co-worker/your-first-chat" },
+    { "source": "/quickstart", "destination": "/core/your-account" },
+    { "source": "/development", "destination": "/core/local-development" },
+    { "source": "/connector", "destination": "/catalog/connectors" },
+    { "source": "/connectors/:slug*", "destination": "/catalog/connectors" },
+    { "source": "/regulations", "destination": "/guard/data-handling-and-security" },
+    { "source": "/regulation/:slug*", "destination": "/guard/data-handling-and-security" },
+    { "source": "/data-classification", "destination": "/guard/data-handling-and-security" },
+    { "source": "/search", "destination": "/co-worker/conversations" },
+    { "source": "/support/contact-us", "destination": "/core/getting-help" },
+    { "source": "/essentials/:slug*", "destination": "/introduction" },
+    { "source": "/api-reference/:slug*", "destination": "/core/runtime-api" }
   ]
 }

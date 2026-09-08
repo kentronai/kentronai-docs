@@ -1,0 +1,157 @@
+---
+title: "The aggregate MCP server"
+description: "One endpoint publishes every eligible connection in your workspace as an opaque tool alias, with fixed publication rules, error shapes and route scopes."
+---
+
+Receipt publishes **one** aggregate MCP server, at `POST /connect/mcp`. Every eligible connection in the workspace your token is bound to is flattened into a single tool namespace, so a client attaches once rather than once per provider. You rarely type that path yourself: `receipt mcp serve` is the stdio bridge that speaks to it, and `receipt tools list`, `receipt tools describe` and `receipt tools call` use the same endpoint when you do not name a connection. See [set up an MCP client](/mcp-gateway/quickstart) for the client side.
+
+<Warning>
+**Tool calls made through this endpoint are not yet recorded as receipts.** `POST /connect/mcp` writes no `tool.called` or `tool.observed` event, so calls made by an attached MCP client — or by `receipt tools call` without `--connection` — leave no trace on [Gateway activity](/mcp-gateway/gateway-activity). Calls through `POST /connect/call`, which is what `receipt connect call`, `receipt tools call --connection` and background runs use, are recorded.
+
+Everything else on this page — scope checks, membership checks, the allowlist, the write gate — applies to both paths equally. It is only the recording that differs.
+</Warning>
+
+## The server
+
+| Property | Value |
+| --- | --- |
+| Endpoint | `POST /connect/mcp` |
+| Server identity | `{ "name": "receipt-connect", "version": "1.0.0" }` |
+| Capabilities | `{ "tools": { "listChanged": false } }` |
+| Protocol versions | `2025-11-25` and `2025-06-18` |
+| Methods | `initialize`, `notifications/initialized`, `tools/list`, `tools/call` |
+| Authorization | A Receipt Connect token carrying `connect:credential`, plus membership of the workspace that token is bound to |
+
+The token travels as `Authorization: Bearer <token>` or in the `x-receipt-connect-token` header. A token in the query string is rejected. A missing, invalid or insufficiently scoped token gets `401 {"ok":false,"error":"unauthorized"}`; a token bound to a workspace you do not belong to gets `403 {"ok":false,"error":"workspace_membership_required"}`.
+
+A few protocol details worth knowing before you debug a client:
+
+- **An unknown `protocolVersion` falls back to the first supported version** rather than failing the handshake, so a newer client still gets a usable session.
+- `notifications/initialized` answers `202` with no body, and so does any other notification — a JSON-RPC server never replies to one.
+- `tools/list` **rejects a `cursor` parameter**. The listing is not paginated.
+- Any other method returns `-32601 Method not found`.
+- The server never sets an `Mcp-Session-Id` header. The CLI bridge forwards one if it ever appears, but nothing produces it today.
+
+Underneath, a call is capped the same way as any other gateway call: a 30-second timeout and a 5 MiB response limit.
+
+## The instructions the server sends
+
+`initialize` returns an `instructions` string to every client that connects. It is not decoration — it states the rules a client has to obey, verbatim:
+
+> Receipt tools are reviewed operations scoped to the organization and workspace authenticated by the saved CLI session. Tool names from tools/list are opaque; use them exactly and never construct aliases. Read-only annotations are authoritative. Writes appear only when the token and connection policy allow them; do not bypass a missing tool. read-provider-resource is GET-only and accepts only a provider-relative path and query. Re-list tools after switching workspaces or reconnecting.
+
+## Tool names are opaque aliases
+
+Published names take the form:
+
+```text
+receipt_<provider>_<connection>_<tool>_<20 hex characters>
+```
+
+Each readable part is normalized — lowercased, with anything that is not a letter or digit collapsed into `_`. The hex suffix is a SHA-256 digest over the connection id, the provider, the connection name and the upstream tool name, truncated to 20 characters. The readable prefix in front of it is trimmed as needed so the whole name stays at 128 characters or fewer, and `tools/call` validates that a submitted name matches `^[A-Za-z0-9_-]+$` and is at most 128 characters.
+
+<Warning>
+Copy a tool name from `tools/list`. Never construct one. The readable part is trimmed at an arbitrary point and the digest covers values a client never sees — the stored connection id and the upstream tool name — so a hand-built name will not resolve.
+</Warning>
+
+Because the digest covers the connection id, two connections to the same provider — two GitHub accounts, two Slack workspaces — never collide. Each gets its own distinct alias for the same underlying tool, and each maps server-side to exactly one stored connection. An alias composed for another organization, or for a sibling workspace, cannot be called with your token: the server recomposes the binding set from your own token on every call and looks the submitted name up in that set alone.
+
+## What the gateway publishes, and what it holds back
+
+Only connections stored as a Nango reference **and** currently `valid` take part. A connection you imported yourself — a GitHub token, or an AWS `credential_process` bundle — never publishes tools here, and neither does a connection whose status has gone bad.
+
+For the connections that do take part, the connector's surface decides what appears:
+
+| Connector surface | Published through `/connect/mcp` |
+| --- | --- |
+| `typed-proxy` | Exactly the tool names in its manifest |
+| `compatibility-read` | Only `read-provider-resource` |
+| `resource-aware-get` | Only `read-provider-resource` |
+| `provider-mcp` | **Nothing** |
+| `command-auth` | Nothing — these connectors publish no Receipt tools anywhere; they become CLI configuration inside a worker instead |
+
+A connection whose provider is configured in Nango but has no entry in the checked-in catalog is treated like a `compatibility-read` connector: it publishes `read-provider-resource` and nothing else. The five surfaces themselves are explained in [Receipt Connect](/mcp-gateway/receipt-connect).
+
+Provider-native MCP connectors publishing nothing through the aggregate gateway is deliberate. Their tool lists are discovered from the upstream provider at runtime, and the code says why it holds them back: "Otherwise a new upstream read tool would silently become organization-callable." Those tools stay reachable through the per-connection routes below — just not through the aggregate endpoint.
+
+Three more rules shape a listing:
+
+- **Write tools appear in `tools/list` only when the token carries `connect:write`.** A read-only token sees a shorter list, not a list with failures in it. Whether a write tool exists at all is separately governed by the connection's allowlist — see [manage tools and permissions](/mcp-gateway/tools-and-permissions).
+- **One unhealthy connection is skipped with a warning** rather than failing the whole listing, so a single expired connection does not take down every other tool.
+- **Descriptions are trimmed to 4,096 characters**, and every published tool carries a `readOnlyHint` annotation derived from its access class.
+
+`tools/call` rebuilds that whole set again before dispatching, so a policy change, a newly disabled action and a connection that has just gone invalid all take effect on the next call rather than at the next listing.
+
+## Error shapes
+
+Transport-level problems come back as JSON-RPC errors:
+
+| Code | Message | Cause |
+| --- | --- | --- |
+| `-32700` | `Parse error` | The body is not JSON (HTTP 400) |
+| `-32600` | `Invalid Request` | Not a JSON-RPC 2.0 envelope, or no method (HTTP 400) |
+| `-32601` | `Method not found` | A method other than the four supported ones |
+| `-32602` | `Invalid params` | Malformed `initialize` params, a `cursor` on `tools/list`, or a `tools/call` name that fails the character or length check |
+| `-32602` | `Unknown or unavailable tool` | The alias is not in the set your token can currently see |
+| `-32603` | `Receipt MCP discovery failed` | Composition failed — the connection store was unreadable, or two bindings produced the same alias |
+
+A **provider** failure is different. It is not a JSON-RPC error at all: the call returns a normal result with `isError: true` and the failure text in `content[0].text`, which is what an MCP client expects to show the model. The text is the gateway's own message where there is one — for example `No active <Label> connection. Open Organization Settings > Integrations, connect <Label>, then retry.` — and otherwise `Receipt could not complete the integration tool call.`
+
+A successful call returns `content` as one text block, `structuredContent` when the result is an object, and `isError: false`.
+
+When a call fails specifically because the provider credential is no longer valid, the server also marks that stored connection invalid, so it drops out of the next listing and the workspace shows it as needing a reconnect.
+
+<Tip>
+`-32602 Unknown or unavailable tool` almost always means the listing you are working from is stale: you switched workspaces, an owner or admin changed the allowlist, or a connection expired. Re-run `tools/list`, exactly as the server's own instructions tell clients to do.
+</Tip>
+
+## Calling one connection directly
+
+Two per-connection routes sit beside the aggregate, and the CLI reaches them whenever you name a connection — `receipt tools list --connection`, `receipt tools call --connection`, `receipt connect tools` and `receipt connect call`. Of the pair, only the calling route writes receipts; the listing route writes none, exactly like the aggregate's `tools/list`.
+
+`POST /connect/tools` takes a `connection` and lists that one connection's currently enabled tools — name, description, input schema and read or write access class — including tools the aggregate holds back, such as a provider-native MCP connector's. Actions the allowlist has turned off are filtered out rather than returned as disabled; to see the on and off state of every action, use `GET /connect/connections/:id/actions`, which is what the **Manage tools and permissions** dialog reads.
+
+`POST /connect/call` is dual-mode. Given a `connection` and a `tool` — with optional `arguments` — it is a named tool call. Given `{connection, method, path, query?, headers?}` instead, it is the legacy provider-relative GET, recorded under the tool name `<connection>:<METHOD> <path>`. Both branches write a `tool.called` receipt and, on success, a `tool.observed` receipt, awaited rather than fired and forgotten — as the code puts it, "a serverless request can be frozen the moment it responds", which would drop the write.
+
+Both routes also give a sharper answer than the aggregate when the token is wrong. A token that is valid but only carries `connect:read` gets `403` with `Receipt could not authorize this task to use the connection. This is a task permission problem; reconnecting the account will not fix it.` and the code `receipt_connect_execution_scope_missing`. A token that cannot be verified gets `401` with `Receipt could not authenticate this task. Its runtime access token must be renewed before retrying.` and the code `receipt_connect_runtime_authentication_required`. The aggregate MCP route still answers both cases with the bare `unauthorized`.
+
+## The full route table
+
+Every gateway route lives under `/connect/`. "Membership" means you belong to the workspace the token is bound to; "mutation authority" means you are an owner or admin of that workspace, or an owner or admin of the organization it belongs to.
+
+| Route | Method | Scope | Extra check | Purpose |
+| --- | --- | --- | --- | --- |
+| `/connect/mcp` | POST | `connect:credential` | membership | Aggregate MCP JSON-RPC |
+| `/connect/workspaces` | GET | `connect:read` | — | List workspaces and the current one |
+| `/connect/workspaces` | POST | `connect:write` | org owner or admin | Create a workspace |
+| `/connect/workspaces/:id` | PATCH | `connect:write` | mutation | Rename |
+| `/connect/workspaces/:id` | DELETE | `connect:write` | mutation | Delete |
+| `/connect/workspaces/:id/token` | POST | `connect:read` | membership of `:id` | Mint a workspace-bound token with the caller's scopes |
+| `/connect/workspaces/:id/members` | GET | `connect:read` | mutation, in the service | Active members and pending invitations |
+| `/connect/workspaces/:id/members/:userId` | PUT | `connect:write` | mutation, in the service | Set role `owner`, `admin` or `member` |
+| `/connect/workspaces/:id/members/:userId` | DELETE | `connect:write` | mutation, in the service | Revoke membership |
+| `/connect/agent/connections` | GET | `connect:read` | membership | Valid Nango-backed connections only: id, provider, name, status |
+| `/connect/tools` | POST | `connect:credential` | membership | One connection's enabled tools |
+| `/connect/call` | POST | `connect:credential` | membership | Named tool call or legacy GET; **writes receipts** |
+| `/connect/capabilities` | GET | `connect:read` | membership | Capability manifest |
+| `/connect/connectors` | GET | `connect:read` | membership | Catalog joined with the live integrations |
+| `/connect/connections` | GET | `connect:read` | membership | Stored connections |
+| `/connect/connections/:id` | DELETE | `connect:write` | membership + mutation | Delete upstream, then locally |
+| `/connect/connections/:id/actions` | GET | `connect:read` | membership | The tool allowlist |
+| `/connect/connections/:id/actions` | PATCH | `connect:write` | membership + mutation | Save the allowlist (at most 200 names) |
+| `/connect/connections/:id/repositories` | GET | `connect:read` | membership | GitHub repository policy |
+| `/connect/connections/:id/repositories` | PATCH | `connect:write` | membership + mutation | Save it (at most 1,000 ids) |
+| `/connect/nango/health` | GET | `connect:read` | membership | Integration-service reachability |
+| `/connect/nango/sessions` | POST | `connect:write` | membership + mutation | Start a connect or reconnect session |
+| `/connect/nango/webhook` | POST | none | HMAC signature | Connection created, overridden, or refresh failed |
+| `/connect/credential/:provider` | POST | `connect:credential` | membership | Materialize a CLI credential bundle |
+| `/connect/credential/github/import` | POST | `connect:write` | membership | Store a GitHub token |
+| `/connect/credential/aws/import` | POST | `connect:write` | membership | Store an AWS `credential_process` bundle |
+
+Failures that can come from any of them: `503 receipt_connect_storage_unavailable`, `503 receipt_workspace_unavailable`, `502 integration_request_failed`, `400 Malformed JSON body` and `400 Request body must be a JSON object`.
+
+<Note>
+Signing the CLI in is not one of these routes. The device login lives in the web application, at `/api/receipt-connect/cli-login`, which is why [`receipt setup`](/cli/setup) takes an auth URL separately from the gateway URL.
+</Note>
+
+Next step: [see what the gateway records](/mcp-gateway/gateway-activity).

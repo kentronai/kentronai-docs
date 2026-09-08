@@ -1,0 +1,101 @@
+---
+title: "Model policy"
+description: "Turn manufacturers and individual models on or off for your organization, set the three compliance flags, and read what each control actually enforces."
+---
+
+Model policy decides which of the catalog's models your organization is allowed to use. You can switch off a whole manufacturer, override that denial for a single model, and set three compliance flags. Every chat turn resolves its model through that policy before a provider is called, and a denial is an HTTP 403 the user sees in the thread.
+
+<Warning>
+**Two of the three compliance flags do not behave the way their labels read.**
+
+**"Require organization provider key"** is not enforced on the request path. The toggle persists, but no server-side check reads it: the only reader is a client-side filter over the model list in the composer, and the model picker that list feeds is not mounted in this release. No request is refused because the flag is on.
+
+**"Enforce Study Mode"** is enforced, and that is the problem. It pins every chat request to `openai/gpt-oss-120b`, a catalog row whose only routes are `azure` and `gateway` — neither is executable at this release. The first model call of a turn is the chat router, so by code reading the turn fails there: the router retries once, then the thread shows **"Beetle stopped before completing this response."** with the reason **"Receipt couldn't determine the access needed for this request. Please retry; no task was started."** No test covers the combination. Verify it against your own deployment before you enable it.
+</Warning>
+
+## Where the controls live
+
+Two routes share one underlying policy record:
+
+- `/organization/settings/provider-policy` — **"Provider policy"**, "Configure provider and model restrictions and compliance flags for your organization." It renders three sections: compliance flags, provider controls, and model controls.
+- `/organization/settings/compliance-policy` — **"Compliance & Policy"**, "Configure organization-level AI rules and access policies." It renders only the compliance flags — the same section as above, nothing more.
+
+Neither route has a sidebar entry; you reach them by typing the URL. Both are owner- and admin-only, and there is no access-denied screen: if your role is anything else, or if no organization is active, the organization settings layout returns you to the app root before either page renders.
+
+<Frame caption="Provider policy. The three compliance-flag cards sit above the Providers section; each card carries its description, its switch — reading Disabled here — and its help line. The workspace indicator at the top names the workspace you are in; the policy record itself is organization-wide.">
+  <img src="/images/llm-gateway/provider-policy.png" alt="The Provider policy settings page showing the Require ZDR, Require organization provider key and Enforce Study Mode cards with their switches off, and the beginning of the Providers section below them." />
+</Frame>
+
+## Compliance flags
+
+| Card | Description in the app | Help text |
+|---|---|---|
+| **Require ZDR (Zero Data Retention)** | "Only allow models from AI providers that do not retain data. This is enforced at the provider level." | "Applies immediately to model availability." |
+| **Require organization provider key** | "Only allow models from providers that have an active organization API key." | "Applies immediately to provider availability." |
+| **Enforce Study Mode** | "Force organization chat requests to use Study Mode and lock the toggle." | "Applies immediately to new chat requests." |
+
+### Require ZDR
+
+This flag does two things.
+
+It restricts model selection to catalog models marked zero-data-retention, denying anything else. The catalog entry's own flag is the whole test — there is no runtime check against the provider.
+
+And it gates one tool: Anthropic code execution is dropped from a request, with the reason `blocked_by_compliance`, when the organization requires ZDR and holds no active organization provider key for that provider.
+
+Both checks share the same bypass. Before the compliance test runs, the engine asks whether the organization's stored provider-key snapshot marks an executable provider — OpenAI or Anthropic — among the model's routes. If it does, the model skips the ZDR test entirely. That is exactly what the [BYOK](/llm-gateway/bring-your-own-key) confirmation dialog warns you about when you save a key while ZDR is on. The snapshot is organization-global, so a key saved on a single workspace does not create the bypass.
+
+<Note>
+Scope this flag precisely when you describe it to anyone. It restricts which models can be selected and it gates one tool. It is **not** an end-to-end no-retention guarantee, and it does **not** suppress application error telemetry: the flag is recorded into the telemetry payload but is never consulted to decide whether to send one. See [Data handling and security](/guard/data-handling-and-security) for what does and does not leave the deployment.
+</Note>
+
+### Enforce Study Mode
+
+An organization-enforced mode wins over both the request's mode and the thread's mode. Study Mode pins the model to `openai/gpt-oss-120b`, injects its own study-assistant system prompt, and empties the provider-native tool allowlists for `openai`, `anthropic`, `google` and `xai`. In the composer's `+` menu, the **Study Mode** checkbox becomes disabled and its tooltip changes to **"Study Mode is enforced by your organization"**.
+
+The enforcement works. The pinned model is the problem — see the callout at the top of this page.
+
+## Provider and model controls
+
+**Providers** ("Enable or disable AI providers for your organization.", help "Changes apply immediately. Disabled providers and their models are unavailable to the organization.") gives you one toggle per model-catalog manufacturer. There are eleven — OpenAI, Anthropic, Google, Alibaba, DeepSeek, Meta, Mistral, MiniMax, Moonshot, xAI and Z.AI — not the 32 tiles in the [provider gallery](/llm-gateway/models-and-providers), which are a different thing entirely. Each row carries a **"View all models"** link through to that manufacturer's model list.
+
+**Model Controls** ("Override model availability per model. Disabled by provider or compliance policy is shown in the description.", help "Changes apply immediately. You can override a provider-level denial per model here.") lets you act on a single model. A row that is already denied describes itself as `{modelId} · Disabled by: {sources}`.
+
+<Warning>
+**The model toggles mean opposite things on the two screens.** On `/organization/settings/models/{providerId}` — the per-manufacturer list, help text "Changes apply immediately. Disabled models are unavailable to the organization." — a **checked** switch means the model is **enabled**. In the **Model Controls** section of `/organization/settings/provider-policy`, a **checked** switch means the model is **disabled**. This is a real inconsistency in the product, not a documentation simplification. Read the screen you are on before you flip anything, and verify the result on the other screen.
+
+The **Providers** toggles on the same page follow the first convention: checked means enabled.
+</Warning>
+
+## Strict mode: `CHAT_REQUIRE_BYOK`
+
+`CHAT_REQUIRE_BYOK` is the one hard "a provider key is required" gate, and it is an environment variable rather than a screen. Its own description reads: "Optional strict mode. Set true only when every model request must use a workspace-managed provider key instead of the platform-credit gateway." It ships as `false`.
+
+With it on, a request that would otherwise fall back to platform credit is refused instead. Three extra denial reasons become possible: `policy_denied:missing_org_context_for_provider_key` when the request carries no organization, `policy_denied:provider_not_supported_by_byok:{providerId}` when the resolved route is not one of the two providers a key can execute, and `policy_denied:missing_provider_api_key:{providerId}` when it is but no key is stored.
+
+See [Configuration](/llm-gateway/configuration) for the rest of the gateway's variables.
+
+## What a denial looks like
+
+Every model-policy denial returns HTTP **403** and is not retryable. The reasons below share one translated message — **"The selected AI model is not allowed for your organization."** — so the machine-readable reason attached to the failure is what tells you which rule fired. When several apply, they are joined into one reason, as in `policy_denied:provider,model`.
+
+| Reason | What tripped |
+|---|---|
+| `policy_denied:provider` | The model's manufacturer is in the disabled provider list. |
+| `policy_denied:model` | The model itself is in the disabled model list. |
+| `policy_denied:compliance` | Require ZDR is on and the model is not marked zero-data-retention. |
+| `unknown_model` | The requested model id is not in the catalog. |
+| `no_model_selected` | Nothing supplied a model — no enforced mode, no request model, no thread model. |
+
+The strict-mode reasons above are the exception: any reason containing `missing_provider_api_key` is shown as **"This provider requires an organization API key, but no key is configured."** instead.
+
+For the full set of chat error strings and what to do about each, see [Errors and limits](/co-worker/errors-and-limits).
+
+## How the policy is stored, and what it covers
+
+One row per organization holds the disabled provider ids, the disabled model ids, the compliance flags, the tool switches, the provider-key snapshot and the enforced mode. It is overwritten on each update — no prior version is kept, and it is **not** a receipt stream, so a policy change leaves no audit history beyond its timestamp, and a denial writes no receipt either. If you need a record of who changed what, this is not where you will find it; see [Receipts and audit](/guard/receipts-and-audit) for what is recorded.
+
+Two write paths reach that row. The settings UI uses sync mutators whose server pass re-reads your membership row in the database — not the role cached in the browser — and refuses anyone who is not an owner or admin with **"Only workspace owners or admins can manage organization settings."** The other is the organization-scoped `POST /api/org/model-policy`, which accepts seven actions: `toggle_provider`, `toggle_model`, `toggle_compliance_flag`, `set_enforced_mode`, `toggle_provider_native_tools`, `toggle_external_tools` and `toggle_tool`. On either path an id that is not in the catalog is rejected with `Unknown provider id: {id}`, `Unknown model id: {id}`, `Unknown tool key: {key}` or `Unknown mode id: {id}`. The plan-based feature gates named on these screens always resolve to allowed, so no plan blocks you from setting policy.
+
+The deny lists and flags are evaluated when a chat turn — and the background title generation that follows it — resolves its model. Background Factory runs resolve their own model and funding on a separate, OpenAI-only path and are not filtered by these lists.
+
+Next step: [see what those model calls cost](/llm-gateway/usage-and-spend)

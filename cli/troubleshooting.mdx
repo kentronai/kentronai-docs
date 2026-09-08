@@ -1,0 +1,162 @@
+---
+title: "Troubleshooting the CLI"
+description: "Find the exact message the receipt binary printed, learn what caused it, and run the one command that fixes it."
+---
+
+Almost every failure in the released `receipt` binary is a fixed sentence, so the fastest route to a fix is to search this page for the message you got. Two commands resolve most of them: [`receipt doctor`](/cli/doctor), which reports without changing anything, and [`receipt setup`](/cli/setup), which signs you in again.
+
+## Start with doctor
+
+`receipt doctor` resolves which host you are pointed at, probes the gateway and the sign-in origin, and prints the saved session with its expiry. It never opens a browser and never signs you in, so it is safe to run at any point.
+
+```bash
+receipt doctor
+receipt doctor --target local
+receipt doctor --json
+```
+
+It exits `0` when both origins answered and any saved session is live and matches, and `1` otherwise. Three causes account for most of what it flags:
+
+- **You are not signed in**, or the session file was removed.
+- **The token expired.** CLI tokens last 12 hours and there is no refresh.
+- **You are pointed at the wrong host** — usually a `local` or self-hosted target whose stack is not running, or a session saved for a different target.
+
+## Install and first launch
+
+| Message | Cause | Fix |
+| --- | --- | --- |
+| `Missing required command: <name>` | The installer needs `curl`, `tar` and `awk`, plus `shasum` or `sha256sum` | Install the named tool and re-run the installer |
+| `Unsupported OS: <os>` | The installer only builds for macOS and Linux | There is no Windows build |
+| `Unsupported architecture: <arch>` | Only `arm64` and `x64` are published | Use an arm64 or x64 machine |
+| `Download failed: <url>`, then `Check that this release and asset exist.` | A version or repository override points at a tag that does not exist, or the machine is offline | Unset `RECEIPT_CLI_VERSION` and `RECEIPT_CLI_REPO`, or name a tag that is actually published |
+| `checksums.txt has no entry for <asset>` | The downloaded checksum file does not cover the asset | Re-run the installer; never install by unpacking the tarball by hand |
+| A `shasum` or `sha256sum` verification failure | The download was corrupted or does not match the release | Re-run the installer |
+| Your shell reports `command not found` for `receipt` | The install directory is not on `PATH` | Add the line the installer printed to your shell profile. If a different `receipt` answers, `command -v receipt` shows which one wins |
+| `Killed: 9`, exit code `137`, on macOS | macOS kills a compiled binary whose ad-hoc signature is missing or malformed | Reinstall with the installer script; if it persists, report the version you installed |
+
+<Warning>
+**The macOS binaries are ad-hoc signed only** — no Apple team identifier and no notarization. Install with the published `curl | sh` installer rather than downloading a tarball in a browser, because a browser download attaches a quarantine attribute that Gatekeeper then enforces against an unnotarized binary.
+</Warning>
+
+<Note>
+Upgrading replaces the binary in place. It does not touch your saved session, but it can change the path Codex was told to run, so re-run `receipt mcp install codex` after an upgrade if Codex stops finding the bridge. See [Install the CLI](/cli/install).
+</Note>
+
+## Endpoint and target
+
+| Message | Cause | Fix |
+| --- | --- | --- |
+| `receipt connect target must be prod, dev, local, or an http(s) URL` | A `--target` word that is not `prod`, `dev`, `local` or a full URL — including `receipt login <word>` | Use a target name or a complete `http(s)` URL |
+| `receipt connect production URL is not configured yet. Set RECEIPT_CONNECT_PUBLIC_GATEWAY_URL=https://app.kentron.ai and re-run, or set RECEIPT_CONNECT_PROD_GATEWAY_URL, RECEIPT_CONNECT_PROD_URL, or RECEIPT_CONNECT_URL.` | You are running a build with no hosted default baked in — a source checkout, or a release older than `v0.1.0-preview.7` | Upgrade to the current release, export one of the named variables, or pass `--server-url` |
+| `receipt connect dev URL is not configured. Set RECEIPT_CONNECT_DEV_GATEWAY_URL or RECEIPT_CONNECT_DEV_URL.` | `--target dev` has no built-in default | Export one of those two variables |
+| `Receipt gateway <url> did not answer a health check (<reason>). Check RECEIPT_CONNECT_PUBLIC_GATEWAY_URL or --server-url.` | Wrong host, a stack that is not running, or a port mismatch on `local` | Correct `--server-url` or `RECEIPT_CONNECT_LOCAL_SERVER_URL`, and confirm the stack is up |
+| `Receipt sign-in origin <url> is unreachable (<reason>). Check --auth-url.` | The sign-in origin is wrong or unreachable | It must be the exact origin your browser uses; set `--auth-url` or `RECEIPT_CONNECT_LOCAL_AUTH_URL` |
+| `Saved session targets <a>, not <b>; run 'receipt setup' for this target.` | `doctor` was asked about one target while the saved session belongs to another | Run `doctor` with the target you signed in with, or `receipt setup --target <t>` |
+
+<Tip>
+An unrecognised `--target` word is rejected **before** `--server-url` is applied, so `--target staging-two --server-url https://<your-receipt-host>` fails on the target word even though you supplied an explicit URL. Pass the URL as the target instead.
+</Tip>
+
+## Signing in
+
+| Message | Cause | Fix |
+| --- | --- | --- |
+| `receipt connect device login failed to start: http_404` | The sign-in origin is not the web application — for example a gateway that does not serve the CLI login route | Pass `--auth-url <web origin>` |
+| `receipt connect device login failed to start: rate_limited` | More than 10 sign-in starts in 60 seconds, or more than 3 pending at once, from one client IP | Wait 60 seconds and retry |
+| `receipt connect device login failed to start: receipt_connect_storage_unavailable` | The server-side store for pending logins is down | Retry later; this is an operator problem |
+| `receipt connect device login request failed for <endpoint>: <message>` | A network failure or a timeout on the start request | Check connectivity to the sign-in origin, then retry |
+| `receipt connect device login expired` | The code lives 10 minutes and you passed it | Run the command again and approve promptly |
+| `receipt connect device login timed out` | The CLI polled for its full 10 minutes without an approval | Run the command again |
+| `receipt connect device login returned an empty token` | The server approved but returned nothing usable | Retry; if it repeats, it is an operator problem |
+| `receipt connect login did not return a workspace; select a Receipt workspace and try again` | The browser session that approved the CLI has no active organization | Open Receipt, select a workspace, then re-run the command |
+
+The approval page has its own messages. **`Select a workspace first`** appears with `Receipt Connect credentials are stored at the workspace level. Open Receipt, select a workspace, then run the CLI command again.` — the browser half of the workspace error above. **`This Receipt Connect code is invalid or expired.`** means the code is unknown or past its ten minutes. **`This Receipt Connect code was already used. Run the CLI command again.`** means you approved the same code twice; each one is single-use. A successful approval reads `Receipt Connect is approved`, with `You can return to the terminal. This page can be closed.`
+
+## Sessions and authorization
+
+| Message | Cause | Fix |
+| --- | --- | --- |
+| `receipt workspace: not signed in; run 'receipt setup' first` | No saved session, or `--target` names one that was never created | Run `receipt setup`. `receipt workspace --help` produces this too, because these commands do not print help |
+| `receipt mcp: not signed in; run 'receipt setup' first` | The same, from `receipt mcp` **and** from `receipt tools` — both share the identity resolver, so `tools` inherits the `receipt mcp:` prefix | Run `receipt setup` |
+| `Receipt Connect gateway is unavailable; run 'receipt setup' or set RECEIPT_CONNECT_TOKEN` | `receipt connect list`, `tools` or `call` with no session and no environment identity — or `RECEIPT_CONNECT_TOKEN` set with no `RECEIPT_CONNECT_GATEWAY_URL`, which suppresses the saved session | Sign in, or set both variables together |
+| `Receipt Connect task token is unavailable; run 'receipt setup' or set RECEIPT_CONNECT_TOKEN` | A gateway URL is set in the environment but no token is | Set `RECEIPT_CONNECT_TOKEN`, or unset the gateway variable so the saved session is used |
+| `unauthorized` from `workspace`, `tools` or `mcp` | The 12-hour token expired or was revoked. These commands do not check the expiry themselves, so the gateway is the first to notice | `receipt doctor` marks the session `EXPIRED`; run `receipt setup`, or `receipt setup --fresh-login` to force a new login |
+| `Saved Receipt session was rejected by the gateway; signing in again.` followed by success | Not an error. `receipt connect status`, `disconnect` and provider onboarding retry a rejected token once by signing in again | Nothing |
+| `Receipt could not authenticate this task. Its runtime access token must be renewed before retrying.` (HTTP 401, code `receipt_connect_runtime_authentication_required`) | The gateway rejected the token on a tool listing or call | Run `receipt setup`. Inside a sandboxed run, the task token must be reissued |
+| `Receipt could not authorize this task to use the connection. This is a task permission problem; reconnecting the account will not fix it.` (HTTP 403, code `receipt_connect_execution_scope_missing`) | The token can discover tools but not execute them | Use a CLI sign-in token, or a task token that carries execution scope. Reconnecting the provider changes nothing |
+| `workspace_membership_required` (HTTP 403) | The token's workspace is not one you are a member of, or you lack authority for the change | Run `receipt workspace use <workspace>`, or ask an owner or admin |
+
+<Note>
+A session file that will not parse, or that is missing its gateway URL, token or organization id, is treated as **no session** rather than as an error — you get `not signed in` and the fix is `receipt setup`. A file the CLI cannot read at all, such as one with wrong permissions, is different: the read throws and the command exits `1` with the underlying error. Deleting `~/.receipt/session.json` and signing in again clears both.
+</Note>
+
+## Connecting a provider
+
+| Message | Cause | Fix |
+| --- | --- | --- |
+| `unsupported Receipt Connect onboarding choice: <Label>` | You picked a numbered entry in the interactive menu whose label does not resolve to a connector id | Run `receipt connect <id>` or pass `--provider <id>`. See [Connecting providers](/cli/connect) |
+| `unsupported Receipt Connect provider. Use aws, gcp, …` | An unknown connector word — including a mistyped subcommand, such as `statsu` for `status` | Use an id from the catalog |
+| `Unsupported connector. Use one of: …, or any integration configured in Nango.` (HTTP 400) | The server does not know that connector id | Use an id the deployment supports |
+| `Self-hosted Nango is not configured. Set RECEIPT_INTEGRATIONS_URL, RECEIPT_INTEGRATIONS_SECRET_KEY, and RECEIPT_INTEGRATIONS_WEBHOOK_SECRET.` (HTTP 503) | The deployment has no integration provider configured | Operator action; nothing to fix on your machine |
+| `Nango did not return a connect link.` | The provider authorization link could not be created | Retry, then raise it with an operator |
+| `Timed out waiting for <provider> connection.` | Authorization was not completed inside the wait window | Finish in the browser, then run `receipt connect status` |
+| `receipt connect disconnect: no aws:default connection found` | `disconnect` defaults to provider `aws` and name `default` | Pass `--provider <id>` |
+| `receipt connect relay has been removed. …` | A command that no longer exists | Use `receipt connect <id>` |
+| `receipt connect <subcommand> requires a connection id or provider:name` | `connect tools` or `connect call` with no connection given | Pass a connection id, or `provider:name` |
+| `receipt connect call is read-only and supports GET only` | A non-GET method was requested | Call a named tool instead: `receipt connect tools <connection>` |
+| `receipt connect call requires --path beginning with /` | Neither a tool name nor an absolute path was given | Give a tool name, or a `--path` starting with `/` |
+| `--json must contain valid JSON` / `--json must contain a JSON object` | Shell quoting mangled the payload, or you passed an array | Wrap the payload in single quotes and pass an object |
+
+<Tip>
+`--no-wait` works; `--wait=false` never does, because the flag parser stores it as a string that the check can never match. Use `--no-wait`.
+</Tip>
+
+## Tools and MCP clients
+
+| Message | Cause | Fix |
+| --- | --- | --- |
+| `receipt tools list` prints no tools | The session's workspace has no valid connection, or only connectors whose tools are exposed through a provider-native MCP server | Confirm the workspace with `receipt workspace current`, check `receipt connect status`, connect a provider, and pass `--connection` for MCP-backed connectors |
+| `Receipt tool '<name>' was not found` | The name was typed or assembled by hand | Re-run `receipt tools list` and copy the name from the output |
+| `--json must be a JSON object` | The tool argument payload was empty or not an object | Pass a JSON object |
+| `Codex MCP server 'receipt' is already installed; remove it first` | A duplicate install, including after the binary path changed | `receipt mcp remove codex`, then install again |
+| `Codex does not accept an arbitrary config path; expected <path>. Set CODEX_HOME before running Receipt if Codex uses another home.` | `--client-config` points somewhere Codex does not read | Export `CODEX_HOME` instead |
+| `refusing to modify non-regular client config: <path>` | The Codex `config.toml` is a symlink or another non-regular file | Replace it with a regular file |
+| `codex mcp <subcommand> failed and the prior config was restored: <stderr>` | The `codex` binary is missing or failing. Your previous configuration was put back | Install Codex, or point at it with `--client-bin` |
+| `receipt mcp install/status/remove currently supports codex; use 'receipt mcp config --client generic' for other clients` | Managed install is Codex-only | Generate the generic configuration and paste it into your client |
+| `receipt mcp could not resolve the Receipt CLI entrypoint` | The command that starts the bridge could not be determined | Re-install the CLI so the binary sits at a stable path |
+| `codex mcp get returned invalid JSON` | Codex answered with something unparseable | Check that `codex` runs on its own, then retry |
+
+## Observing Claude Code
+
+<Warning>
+**The Claude observer companion is not shipped in the current release.** `receipt setup` reports `Claude observer: not installed` with the reason, and that is expected — it does not stop sign-in. Point at your own companion binary with `--proxy-bin <path>` or `RECEIPT_CLAUDE_PROXY_BIN`, or wait for a release that bundles one.
+</Warning>
+
+| Message | Cause | Fix |
+| --- | --- | --- |
+| `Unable to find the Claude observer companion binary.` | No companion is installed | `--proxy-bin <path>`, or set `RECEIPT_CLAUDE_PROXY_BIN` |
+| `import source is required. Supported sources: clauden, claude-code` | The source was missing or unrecognised | Use `clauden` or `claude-code` |
+| `--launch requires --follow or receipt observe clauden` | `--launch` on a one-shot import | Use `receipt observe` |
+| `Background Claude observation is currently supported on macOS and Linux.` | Any other platform | Run `observe` in the foreground |
+| `observe claude-code supports live file tailing only; use observe clauden install for proxy service install` | A service install was requested for the file-tailing source | Use `observe clauden install` for the proxy service |
+| `unsupported_stream` from the ingest endpoint | A custom `--stream` outside the two import prefixes the server accepts | Keep the default stream, or capture locally with `--local-only` |
+
+## When the CLI opens a browser you did not ask for
+
+Running `receipt` with no arguments, or `receipt --help <word>`, starts provider onboarding — which begins a real device login. `Ctrl-C` cancels the poll, and the code expires on its own after 10 minutes. Use `receipt --help` alone for help. The [CLI overview](/cli/overview) covers this and the other parsing traps.
+
+## Exit codes
+
+The binary uses `0` for success and `1` for every failure, including a device-login failure, a rate limit, a rejected token and any validation error. `receipt doctor` also exits `1` when its checks do not pass. The one code that does not come from the CLI itself is `137` on macOS, which is the operating system killing the process before it runs. The full list, with the environment variables each command reads, is in [Environment and exit codes](/cli/environment-and-exit-codes).
+
+## Hosted, local, and automation
+
+**Hosted.** There is nothing to configure. `receipt doctor`, then `receipt setup`.
+
+**A local or self-hosted stack.** Set the gateway origin and the sign-in origin — `RECEIPT_CONNECT_LOCAL_SERVER_URL` and `RECEIPT_CONNECT_LOCAL_AUTH_URL` for `--target local` — then run `receipt doctor --target local` before `receipt setup --target local`. The most recent `setup` decides which target `workspace`, `tools` and `mcp` use, so a plain `receipt setup` flips you back to the hosted app.
+
+**CI and sandboxes.** Export `RECEIPT_CONNECT_GATEWAY_URL` and `RECEIPT_CONNECT_TOKEN` together, plus `RECEIPT_CONNECT_ORGANIZATION_ID` for `tools` and `mcp serve`. With both set, `connect list`, `tools` and `call` never read a session file at all. Use `RECEIPT_CLI_CONFIG_DIR` to isolate anything that does get written, set `RECEIPT_CONNECT_OPEN_BROWSER=0` so a stray onboarding cannot spawn a browser, and gate health checks on the exit code of `receipt doctor --json`.
+
+If a message is not here, check whether it came from the gateway rather than the CLI — [MCP Gateway troubleshooting](/mcp-gateway/troubleshooting) covers the server side — or ask through [Getting help](/core/getting-help).
+
+Next step: [meet the developer CLI that runs from source](/cli/from-source/overview).

@@ -1,0 +1,231 @@
+---
+title: "Set up an MCP client"
+description: "Sign in with the Receipt CLI, install the Codex bridge, and confirm which workspace and which tools your MCP client will see."
+---
+
+Six commands give Codex — or any MCP client that can launch a local command — every tool your workspace's connections publish, without the client ever holding a provider credential. The app lists those six on the **MCP Gateway** page, each with its own Copy button. This page walks through them in order, then covers the two things the panel leaves out: how to point a client at a workspace other than **Default**, and when you have to restart the client.
+
+## Before you start
+
+- An account on the hosted app at `app.kentron.ai`, or on your own deployment, signed in with an active organization.
+- The `receipt` CLI installed — see [Install the CLI](/cli/install).
+- Codex on your `PATH` if you want the managed install. `receipt mcp install codex` shells out to `codex mcp add` rather than editing the file itself, so it runs whatever `codex` resolves to; `--client-bin <path>` points it at another binary.
+- Ideally at least one connected app in the workspace. Without one, step 6 lists nothing — see [Connect an app](/mcp-gateway/connect-an-app).
+
+## Find the setup panel
+
+Open **MCP Gateway** in the sidebar. The panel headed **Use connections with Receipt CLI and MCP clients** sits on the gateway landing page and again at the top of every workspace's **Overview**. Its body names the workspace you are configuring — "Receipt CLI and the local MCP bridge use a workspace-bound token. The selected workspace is **Default**; its connections and permissions are isolated from other workspaces in this organization." — and the badge beside it reads **Default workspace** or **Workspace scoped**.
+
+<Frame caption="A workspace Overview. The setup panel carries the six numbered commands with a Copy button each, and marks steps 4 and 6 optional. Below it sit the Open integrations, LLM keys and Your access tiles, then the workspace tab strip and the Open integrations tab, where a Jira card reports '1 saved connection needs attention'.">
+<img src="/images/mcp-gateway/workspace-overview.png" alt="The workspace Overview page showing the setup panel with six numbered receipt commands, three summary tiles, the Open integrations / LLM keys / Settings / Dashboard tabs, and integration cards for Jira, Airtable and Anthropic." />
+</Frame>
+
+Steps 4 and 6 are marked **(optional)** because the bridge works without them; they check the install rather than complete it. If a Copy button fails, the toast reads "Could not copy the command. Select and copy it instead."
+
+## The six commands
+
+<Steps>
+<Step title="Sign in — receipt setup">
+```bash
+receipt setup
+```
+
+On the hosted app there is nothing to configure first: the released binary resolves `https://app.kentron.ai` on its own. The CLI prints a code and opens your browser:
+
+```
+Step 1 of 2: sign in to Receipt
+  Open: https://<your-receipt-host>/api/receipt-connect/cli-login?user_code=ABCD-EFGH
+  Code: ABCD-EFGH
+  Approve the CLI from the workspace that should own these connections.
+```
+
+Approve it in the browser. You need to be signed in there with an active organization, or the page answers **Select a workspace first**. On success the browser shows **Receipt Connect is approved**, the terminal prints `Receipt sign-in approved.`, and then:
+
+```
+Receipt account: connected to workspace Default (<workspaceId>)
+Receipt Connect connectors:
+  aws: AWS via real 'aws' CLI
+  gcp: Google Cloud via real 'gcloud' CLI
+  ...
+Claude observer: not installed (...)
+```
+
+That connector list is the whole catalog, not the apps you have connected. Two things to know about the session it saved:
+
+- It is **always bound to the organization's Default workspace**, whichever workspace you copied the command from. Switching is a separate command, below.
+- Its token lasts **12 hours**. When it expires, run `receipt setup` again; it detects the dead token and re-runs the login for you.
+
+<Note>
+Every later command on this page needs that session. Without it, `receipt mcp` and `receipt tools` stop with `receipt mcp: not signed in; run 'receipt setup' first`, and `receipt workspace` with `receipt workspace: not signed in; run 'receipt setup' first`. Flags, session reuse and the device login in full are in [Signing in with receipt setup](/cli/setup).
+</Note>
+</Step>
+
+<Step title="Install the Codex bridge — receipt mcp install codex">
+```bash
+receipt mcp install codex
+```
+
+This registers an MCP server named `receipt` in Codex's own configuration — `$CODEX_HOME/config.toml`, by default `~/.codex/config.toml` — by shelling out to `codex mcp add`. It backs the file up first, and if anything fails, including Codex not reporting the server afterwards, it restores the backup and tells you so. On success it prints a JSON result carrying `ok`, `client`, `name`, `installed`, `removed`, `configPath`, `backupPath`, `workspace` and `remote`.
+
+If you have installed before, it refuses with `Codex MCP server 'receipt' is already installed; remove it first` — run `receipt mcp remove codex` and install again. `--dry-run` prints the plan and changes nothing.
+
+<Warning>
+Codex launches the bridge only when it starts. Restart Codex after installing, and again after every workspace switch; the restart rule below explains why.
+</Warning>
+</Step>
+
+<Step title="Preview the configuration — receipt mcp config codex">
+```bash
+receipt mcp config codex
+```
+
+Prints the Codex server block for the same launcher `install` hands to `codex mcp add`, so you can read what Codex will run before or after installing it:
+
+```toml
+[mcp_servers."receipt"]
+command = "/path/to/receipt"
+args = ["mcp", "serve"]
+```
+
+There is no token in it. The bridge (`receipt mcp serve`) reads your saved session when it starts, and a guard refuses to generate or install any config that contains the session token or credential material.
+</Step>
+
+<Step title="Check the installed bridge — receipt mcp status codex (optional)">
+```bash
+receipt mcp status codex
+```
+
+Asks Codex what it has, by running `codex mcp get receipt --json`, and prints `ok`, `client`, `name`, `installed`, `configPath`, `config`, `workspace` and `remote`. `installed: true` means Codex knows about the server; the `workspace` block says which workspace the bridge will serve, and `remote` is the gateway URL it forwards to.
+</Step>
+
+<Step title="Confirm the workspace — receipt workspace current">
+```bash
+receipt workspace current
+```
+
+```
+Default (<workspaceId>) [Default]
+```
+
+After a fresh sign-in this is always **Default**. If the panel you copied from carried the **Workspace scoped** badge, you are not yet configured for that workspace — switch to it before going further. Add `--json` for an `{ok, workspace}` envelope.
+</Step>
+
+<Step title="List the tools — receipt tools list (optional)">
+```bash
+receipt tools list
+```
+
+Output is always JSON: the aggregate server's tool list merged into an envelope that says which workspace answered.
+
+```json
+{
+  "ok": true,
+  "tools": [
+    {
+      "name": "receipt_<provider>_<connection>_<tool>_<digest>",
+      "description": "...",
+      "inputSchema": { "...": "..." },
+      "annotations": { "readOnlyHint": true }
+    }
+  ],
+  "workspace": {
+    "kind": "workspace",
+    "id": "...",
+    "name": "Default",
+    "organizationId": "..."
+  }
+}
+```
+
+Tool names are opaque aliases: a readable prefix followed by a 20-character digest that binds the name to one exact stored connection and one reviewed upstream tool. Copy them from this list; never construct or edit one. The list covers only Nango-backed connections in your token's workspace whose status is `valid`, and:
+
+- Connectors with a typed manifest publish exactly their manifest tools.
+- Connectors that share Receipt's generic proxy publish a single GET-only `read-provider-resource` tool.
+- Provider-native MCP connectors are **excluded from the aggregate list**. They stay reachable through `receipt tools list --connection <provider:name>`.
+- Connectors that authenticate a local CLI instead of storing credentials in Nango — `aws` and `jira-api` — publish nothing here.
+- Write tools appear only when your token carries `connect:write` — the CLI sign-in token does — **and** the connection's policy enables them, which an owner or admin sets per connection in [Manage tools](/mcp-gateway/tools-and-permissions).
+- A connection whose tool surface cannot be read is skipped with a warning rather than failing the whole listing.
+
+An empty `tools` array means nothing in the workspace publishes an aggregate tool: no connection at all, none in the `valid` state, or only provider-native MCP and local-CLI connectors. Check `receipt workspace current`, then connect an app in that workspace's **Open integrations** tab.
+</Step>
+</Steps>
+
+## Point the client at another workspace
+
+Sign-in binds the CLI to **Default**, and the setup panel does not list the command that changes it:
+
+```bash
+receipt workspace list
+receipt workspace use <name>
+```
+
+`list` prints one row per workspace, with `*` marking the current one:
+
+```
+* Default (<workspaceId>) [Default]
+  <name> (<workspaceId>)
+```
+
+`use` accepts a workspace id, slug or name, matched case-insensitively, and prints the switched-to workspace on one line, `<name> (<id>)`, with `[Default]` appended when it is the Default workspace. It is the one command that replaces your token: the gateway mints a new 12-hour token bound to the chosen workspace, carrying the same scopes, and the session file is rewritten with it. If the selector matches more than one workspace you get `workspace '<x>' is ambiguous; use its id`; if it matches none, `workspace '<x>' was not found` — which is also what a workspace you do not belong to gives you, because `receipt workspace list` returns only your own memberships and the gateway re-checks membership before it mints the token.
+
+From then on `receipt tools`, `receipt mcp` and the bridge see that workspace's connections and permissions, and nothing from any other. The full command surface is on [Switching workspaces](/cli/workspaces).
+
+## Restart the client after installing or switching
+
+The bridge reads your saved session **only when it starts**. A running Codex keeps talking to whichever workspace the bridge loaded at launch, and never notices that the file changed. So:
+
+- After `receipt mcp install codex`, restart Codex so it launches the bridge at all.
+- After every `receipt workspace use`, restart the client and let it discover tools again.
+
+The server tells clients the same thing in its own instructions: "Re-list tools after switching workspaces or reconnecting." Aliases are bound to one stored connection, so a name held over from the previous workspace does not resolve in the new one — the call comes back as `Unknown or unavailable tool`.
+
+<Tip>
+`receipt workspace current` and `receipt tools list` are the quickest way to see what a freshly restarted client will get, because they read the same session file the bridge does.
+</Tip>
+
+## Other MCP clients
+
+`install`, `status` and `remove` support Codex only. Any other client name is refused:
+
+```
+receipt mcp install/status/remove currently supports codex; use 'receipt mcp config --client generic' for other clients
+```
+
+For any client that can launch a local command over stdio, generate the generic descriptor and copy its `command` and `args` into that client's configuration by hand:
+
+```bash
+receipt mcp config generic
+```
+
+```json
+{
+  "kind": "receipt.mcp-client-config",
+  "schemaVersion": 1,
+  "name": "receipt",
+  "transport": "stdio",
+  "command": "/abs/receipt",
+  "args": ["mcp", "serve"],
+  "remote": { "url": "https://<gateway>/connect/mcp" },
+  "workspace": { "kind": "workspace", "id": "...", "name": "Default", "organizationId": "..." }
+}
+```
+
+`remote.url` is informational — the client should run the local command, not connect to that URL. The same rules apply as for Codex: the config is token-free, the bridge reads the session at start, and you restart the client after switching workspaces.
+
+<Warning>
+`--output` / `--output-file` on `receipt mcp config` **replaces the whole target file**, with no merge. Never point it at a client's live configuration; write it somewhere new and copy the block in by hand.
+</Warning>
+
+<Note>
+The gateway endpoint itself requires a Receipt Connect bearer token carrying `connect:credential`, which the CLI sign-in mints. This release ships no OAuth authorization server for it, so a client that can only attach to remote MCP servers over OAuth cannot connect; every supported path runs the local bridge.
+</Note>
+
+## What you have now
+
+Every call your client makes travels from the bridge to the aggregate server at `/connect/mcp`, where the workspace's allowlists are checked and the provider is called with credentials the client never sees. The request flow is drawn on the [overview](/mcp-gateway/overview) and the protocol details are on [The aggregate server](/mcp-gateway/aggregate-server).
+
+One gap to know about: calls made through the MCP bridge are not yet recorded as receipts, so they do not appear on the workspace's Gateway activity page. Calls made through `/connect/call` — which is what `receipt tools call --connection <provider:name>` uses — are. [Gateway activity](/mcp-gateway/gateway-activity) sets out exactly what is recorded.
+
+If a step failed with a message not covered here, [Troubleshooting](/mcp-gateway/troubleshooting) lists the gateway and CLI errors with their causes and fixes.
+
+Next step: [connect an app to the workspace](/mcp-gateway/connect-an-app).

@@ -1,0 +1,154 @@
+---
+title: "The connector catalog"
+description: "Every app Receipt can connect to, what each connection publishes as tools, and how to find them on the Integrations page."
+---
+
+Connecting an app is how Receipt gets context beyond the chat window. An owner or admin connects Gmail, GitHub, AWS or Jira once, and from then on chat, background runs, the CLI and any MCP client can read from it — within the operations that connection is allowed to call. The connector catalog is the checked-in list that decides which apps you can connect at all, and what each one publishes.
+
+<Warning>
+**Only the 63 connectors listed on this page are connectable out of the box.** They sit inside a browsable directory of about 900 cards; the rest are display-only, almost all of them from a pinned snapshot of the integration provider's public directory. Those cards are not connectable: they show **Coming soon** and carry no button. Receipt's runtime connector list, not the directory, decides whether a card can be connected.
+</Warning>
+
+## Browsing the catalog
+
+The organization-wide surface is **Integrations** in the organization settings rail, titled **Global Integrations**:
+
+> Connected once for the whole organization and available to Receipt chat. Workspace-scoped connections for CLI and MCP clients live under MCP Gateway.
+
+Like the rest of organization settings, it is owner and admin only. The same page appears embedded as the **Open integrations** tab of an MCP Gateway workspace, where it is not restricted to owners and admins — any member of that workspace can use it — and connects into that workspace instead. Which scope you want is covered in [connection scopes](/mcp-gateway/connection-scopes); the connect flow itself is in [connect an app](/mcp-gateway/connect-an-app).
+
+<Frame caption="Global Integrations at the organization scope. Connected apps sit first and offer Manage tools and Disconnect; connectable ones offer Connect. Notice the two filter rows — category chips above, All / Connected / Available / Popular below.">
+  <img src="/images/mcp-gateway/global-integrations.png" alt="The Global Integrations page in Receipt, showing a search field, category chips, segmented tabs and a grid of integration cards, some connected with Manage tools and Disconnect actions and some offering Connect." />
+</Frame>
+
+Three controls narrow the grid, and one extends it:
+
+| Control | What it does |
+| --- | --- |
+| **Search integrations** | Matches an entry's name, id, product, authorization label, categories and connection names |
+| Category chips | **All**, then only the groups that match something: **Development**, **Google**, **Microsoft**, **Project Management**, **Cloud & Data**, **Communication** |
+| Segmented tabs | **All / Connected / Available / Popular**. **Connected** keeps entries that have a connection; **Available** keeps only connectable ones |
+| **Load more** | The grid renders 60 entries at a time and shows `{n} remaining` beside the button |
+
+The six category chips replace the catalog's own fine-grained categories — 23 of them in Receipt's curated list — which the code calls "far too many chips to scan".
+
+When nothing matches, the grid shows **No integrations found** — "Try a different search or turn off the connected-only filter." That sentence outlived its control: the connected-only switch and the authentication-method select are both in the page's hidden markup and are not rendered. Use the **Connected** tab instead.
+
+A card carries **Connect** when it is connectable, **Manage tools** and **Disconnect** once a connection exists, and **Coming soon** when it is neither. One healthy connection gets no extra label — the card already says it is connected — while several show a `{n} connections` count. When none of a card's connections is valid, it says so outright: **1 saved connection needs attention**, or `{n} saved connections need attention`.
+
+<Note>
+Cloud accounts connected for the [Agent Registry](/catalog/agent-registry) use a dedicated connection named `agent-registry` and are deliberately filtered out of this page, so a scan credential never reads as — or gets reused as — your organization's primary connection to that cloud. Connecting AWS, Azure or Google Cloud here is a separate act: it publishes that connector's own tools to chat and MCP clients, which a registry scan credential never does.
+</Note>
+
+## Asking for a connector that does not exist
+
+When your search matches nothing at all — not a connector, and not one of the display-only directory entries — a panel appears above the grid, named after what you typed:
+
+> **Build `{name}` with Beetle Tasks**
+>
+> New integrations are code changes: Beetle opens a task with a connected objective for the catalog entry, Nango mapping, tests, and PR evidence. Connect GitHub first so the worker can create a branch and PR.
+
+Beetle is the assistant's name in the interface. The button reads **Create task** when a GitHub connection exists, **Connect GitHub first** when one can be made, and a disabled **GitHub required** otherwise. Pressing it opens the Tasks page with a pre-filled development task — it files work, it does not enable a connector.
+
+There is no approval or vetting state on a catalog entry or on a connection anywhere in the product. An entry is connectable because it ships in the catalog, and connecting it takes effect immediately with no review step.
+
+## What the catalog contains
+
+Across the 63 connectors, Receipt publishes **91 tools of its own: 88 read and 3 write**. All three writes belong to Apollo — `create-contact`, `update-contact` and `delete-contact`.
+
+- **Authorization**: 45 connectors use OAuth, 17 collect a provider credential directly, and one (`github-app-oauth`) uses a custom flow.
+- **Tool surface**: 18 `typed-proxy`, 39 `compatibility-read`, 2 `resource-aware-get`, 2 `command-auth`, 2 `provider-mcp`.
+
+Write operations are off until an owner or admin enables them for that connection. There is no per-action approval prompt in this release; see [tools and permissions](/mcp-gateway/tools-and-permissions) for the allowlist that governs them.
+
+### Reading the table
+
+**Aliases** resolve exactly and case-insensitively. Display labels are not aliases, so `Google Cloud` is not a name you can type — `gcp` is. `jira`, `confluence` and `tiktok` are product-level shorthands rather than connectors of their own: each resolves to the connector marked as that product's default authorization mode.
+
+**Authorization mode** — *Provider-only* means the provider's Connect interface collects the credential directly (an API key, a personal access token, an access key pair, a service principal), and Receipt creates the integration record for you if it is missing. *OAuth 2.0*, *OAuth* and *Custom* require an operator to have configured that integration in your deployment first.
+
+**Tool surface** decides what a connection publishes. The five surfaces are explained in full on [Receipt Connect](/mcp-gateway/receipt-connect); in short:
+
+| Surface | What the connection publishes |
+| --- | --- |
+| `typed-proxy` | Reviewed, checked-in tools with fixed methods, closed schemas and an explicit read or write class |
+| `compatibility-read` | One Receipt-owned tool, `read-provider-resource` — provider-relative `GET` only |
+| `resource-aware-get` | One read tool, for Atlassian connectors, where Receipt resolves the site and rewrites the path |
+| `provider-mcp` | Tools discovered from the provider's own MCP server, deliberately excluded from the aggregate gateway |
+| `command-auth` | No Receipt tools at all — the connection becomes real CLI configuration inside a worker |
+
+## Every connector
+
+| Identifier | Label | Aliases | Authorization mode | Tool surface |
+| --- | --- | --- | --- | --- |
+| `airtable` | Airtable | airtable, airtable-oauth | OAuth 2.0 | typed-proxy — 4 read |
+| `anthropic` | Anthropic | anthropic | Provider-only | compatibility-read — 1 read |
+| `apollo` | Apollo | apollo, apollo-api-key | Provider-only — API key | typed-proxy — 1 read, 3 write |
+| `attio` | Attio | attio | OAuth 2.0 | compatibility-read — 1 read |
+| `aws` | AWS | aws, cloudwatch, ec2, ecs, eks, elb, iam, lambda, rds, s3, vpc | Provider-only | command-auth |
+| `azure` | Azure | azure, azure-cloud, azure-resource-manager | Provider-only — service principal | typed-proxy — 2 read |
+| `azure-blob-storage` | Azure Blob Storage | azure-blob-storage, azure-blob, azure-storage | OAuth 2.0 | typed-proxy — 2 read |
+| `azure-devops` | Azure DevOps | azure-devops, ado, azuredevops | OAuth 2.0 | compatibility-read — 1 read |
+| `cloudflare` | Cloudflare | cloudflare, cf | Provider-only | compatibility-read — 1 read |
+| `confluence-api` | Confluence API Token | confluence-api, confluence-basic | Provider-only — API token | compatibility-read — 1 read |
+| `confluence-oauth` | Confluence OAuth | confluence-oauth, **confluence** (product default) | OAuth | resource-aware-get — 1 read |
+| `datadog` | Datadog | datadog, dd | Provider-only | compatibility-read — 1 read |
+| `gcp` | Google Cloud | gcp, gcloud, gcs, google, google-cloud, googlecloud, gsutil, bq, bigquery | OAuth 2.0 | typed-proxy — 5 read |
+| `github` | GitHub | github, gh | OAuth 2.0 | compatibility-read — 1 read, plus the repository selection policy |
+| `github-app-oauth` | GitHub (App OAuth) | github-app-oauth | Custom | compatibility-read — 1 read |
+| `github-pat` | GitHub (Personal Access Token) | github-pat | Provider-only | compatibility-read — 1 read |
+| `gitlab` | GitLab | gitlab | Provider-only | compatibility-read — 1 read |
+| `gong-oauth` | Gong (Oauth) | gong-oauth | OAuth 2.0 | compatibility-read — 1 read |
+| `google-ads` | Google Ads | google-ads, googleads, adwords | OAuth 2.0 | compatibility-read — 1 read |
+| `google-analytics` | Google Analytics | google-analytics, ga4 | OAuth 2.0 | typed-proxy — 2 read |
+| `google-calendar` | Google Calendar | google-calendar, gcal, googlecalendar | OAuth 2.0 | compatibility-read — 1 read |
+| `google-calendar-mcp` | Google Calendar (MCP) | google-calendar-mcp, gcal-mcp | OAuth 2.0 | provider-mcp |
+| `google-chat` | Google Chat | google-chat, googlechat, gchat | OAuth 2.0 | typed-proxy — 3 read |
+| `google-docs` | Google Docs | google-docs, googledocs, gdocs | OAuth 2.0 | typed-proxy — 2 read |
+| `google-drive` | Google Drive | google-drive, gdrive, googledrive | OAuth 2.0 | typed-proxy — 2 read |
+| `google-mail` | Gmail | google-mail, gmail | OAuth 2.0 | typed-proxy — 4 read |
+| `google-sheet` | Google Sheets | google-sheet, google-sheets, gsheets, googlesheets | OAuth 2.0 | compatibility-read — 1 read |
+| `google-slides` | Google Slides | google-slides, gslides, googleslides | OAuth 2.0 | typed-proxy — 2 read |
+| `google-tasks` | Google Tasks | google-tasks, googletasks, gtasks | OAuth 2.0 | typed-proxy — 3 read |
+| `hubspot` | HubSpot | hubspot | OAuth 2.0 | compatibility-read — 1 read |
+| `incident-io` | Incident.io | incident-io, incident.io, incidentio | Provider-only | compatibility-read — 1 read |
+| `instagram` | Instagram Insights | instagram, instagram-analytics, instagram-insights | OAuth 2.0 | typed-proxy — 3 read |
+| `jira-api` | Jira API Token | jira-api, jira-basic | Provider-only — API token | command-auth |
+| `jira-oauth` | Jira OAuth | jira-oauth, **jira** (product default) | OAuth | resource-aware-get — 1 read |
+| `lagrowthmachine` | La Growth Machine | lagrowthmachine | Provider-only — API key | compatibility-read — 1 read |
+| `linear` | Linear | linear | Provider-only | provider-mcp |
+| `linkedin` | LinkedIn | linkedin | OAuth 2.0 | compatibility-read — 1 read |
+| `meta-marketing-api` | Meta Marketing API | meta-marketing-api, meta-ads, facebook-ads, facebook-analytics | OAuth 2.0 | compatibility-read — 1 read |
+| `notion` | Notion | notion | OAuth 2.0 | compatibility-read — 1 read |
+| `openai` | OpenAI | openai | Provider-only | compatibility-read — 1 read |
+| `outlook` | Outlook | outlook, microsoft-outlook, outlook-mail | OAuth 2.0 | typed-proxy — 4 read |
+| `sentry` | Sentry | sentry | Provider-only | compatibility-read — 1 read |
+| `slack` | Slack | slack | OAuth 2.0 | compatibility-read — 1 read |
+| `stripe-app` | Stripe App | stripe-app | OAuth 2.0 | compatibility-read — 1 read |
+| `terraform` | Terraform Cloud | terraform, terraform-cloud, tfcloud, tfc | Provider-only | compatibility-read — 1 read |
+| `tiktok-accounts` | TikTok Accounts | tiktok-accounts, tiktok-business-accounts | OAuth 2.0 | typed-proxy — 2 read |
+| `tiktok-ads` | TikTok Ads Analytics | tiktok-ads, tiktok-analytics, **tiktok** (product default) | OAuth 2.0 | typed-proxy — 2 read |
+| `tiktok-personal` | TikTok Personal | tiktok-personal, tiktok-login-kit | OAuth 2.0 | typed-proxy — 2 read |
+| `vercel` | Vercel | vercel | Provider-only | compatibility-read — 1 read |
+| `youtube` | YouTube Analytics | youtube, youtube-analytics | OAuth 2.0 | typed-proxy — 2 read |
+| `zendesk` | Zendesk | zendesk, zendesk-oauth, zendesk-api-key | OAuth 2.0 | compatibility-read — 1 read |
+| `zoho` | Zoho | zoho | OAuth 2.0 | compatibility-read — 1 read |
+| `zoho-books` | Zoho Books | zoho-books | OAuth 2.0 | compatibility-read — 1 read |
+| `zoho-calendar` | Zoho Calendar | zoho-calendar | OAuth 2.0 | compatibility-read — 1 read |
+| `zoho-crm` | Zoho CRM | zoho-crm | OAuth 2.0 | compatibility-read — 1 read |
+| `zoho-desk` | Zoho Desk | zoho-desk | OAuth 2.0 | compatibility-read — 1 read |
+| `zoho-inventory` | Zoho Inventory | zoho-inventory | OAuth 2.0 | compatibility-read — 1 read |
+| `zoho-invoice` | Zoho Invoice | zoho-invoice | OAuth 2.0 | compatibility-read — 1 read |
+| `zoho-mail` | Zoho Mail | zoho-mail | OAuth 2.0 | compatibility-read — 1 read |
+| `zoho-people` | Zoho People | zoho-people | OAuth 2.0 | compatibility-read — 1 read |
+| `zoho-recruit` | Zoho Recruit | zoho-recruit | OAuth 2.0 | compatibility-read — 1 read |
+| `zoom` | Zoom | zoom | OAuth 2.0 | compatibility-read — 1 read |
+| `zoominfo` | ZoomInfo | zoominfo | OAuth 2.0 | compatibility-read — 1 read |
+
+<Note>
+`gcp` sits in two places at once. Its manifest declares both a command-backed credential mode and proxy tools, and the classifier checks proxy tools first — so `gcp` reports as `typed-proxy` while still producing an isolated `gcloud` configuration inside a worker.
+</Note>
+
+Your deployment's list can grow in one direction. An integration configured in your deployment's integration provider but absent from Receipt's catalog is appended as an extra row with the `compatibility-read` surface, so it gets the one bounded read tool and nothing more. Every other card on the page is display-only and stays **Coming soon**.
+
+Next step: [see what the skills library holds](/catalog/skills).

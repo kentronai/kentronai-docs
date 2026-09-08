@@ -1,0 +1,162 @@
+---
+title: "Troubleshooting the MCP Gateway"
+description: "The gateway, connection and CLI errors you are most likely to meet, what each one means, and what to change."
+---
+
+Almost every gateway failure is one of three things: your session is bound to a different workspace than the one holding the connection, the app is not connected in that workspace at all, or the operation you want is not on that connection's allowlist. Run the three checks below before you go looking for a message in the tables — they account for most reports of a missing tool or a refused call.
+
+## Start with three checks
+
+<Steps>
+<Step title="Check the endpoint and the session">
+```bash
+receipt doctor
+```
+
+It is read-only: it resolves the host, probes the gateway health endpoint and the sign-in origin, reports the saved session, and never opens a browser. The first line is `receipt doctor: ok` or `receipt doctor: attention needed`, and the command exits with status 1 when it is not ok. A probe that could not be reached prints as `unreachable: <error>`. See [receipt doctor](/cli/doctor) for the full output.
+</Step>
+
+<Step title="Check which workspace you are bound to">
+```bash
+receipt workspace current
+```
+
+Signing in binds your session to the organization's **Default** workspace — always. `receipt workspace use <name>` moves it; a new browser sign-in puts you back on Default, while a `receipt setup` that reuses a still-valid session leaves you where you are. After switching, restart your MCP client: the bridge reads the session once, when it starts.
+</Step>
+
+<Step title="Check that the app is connected in that workspace">
+```bash
+receipt tools list
+```
+
+This lists what the workspace in your session actually publishes. `receipt connect status` reads the same workspace, but it lists connection rows rather than tools — so the two can legitimately disagree. A row can exist and publish nothing.
+</Step>
+</Steps>
+
+## A tool you expected is not there
+
+| What you see | Why | What to do |
+|---|---|---|
+| `receipt tools list` prints no tools | No valid connection in the workspace bound to your session | Confirm with `receipt workspace current`, then connect the app in that workspace |
+| The app is connected on the Global Integrations page, but no tools appear | Global Integrations feeds web chat and Slack. The CLI and MCP clients read a workspace | Connect the same provider inside the workspace, from **Open integrations** on that workspace |
+| `receipt connect <provider>` succeeded, tools still missing | The connection was created in whichever workspace your session was bound to at that moment, always under the name `default`. A new browser sign-in rebinds the session to **Default** | Run `receipt workspace current` to see where you are, `receipt workspace use <name>` to move, then connect again |
+| Linear or Google Calendar MCP tools are absent | Provider-native MCP connectors publish nothing through the aggregate server by design | Address the connection directly: `receipt tools list --connection <provider>:<name>` |
+| A write operation is missing while reads work | Writes are published only when the connection's allowlist enables that action **and** the token carries `connect:write` | Enable the action under **Manage tools** |
+| Tools changed after switching workspace | The client is still holding the tool list from the old session | Restart the MCP client |
+
+<Note>
+The **Manage tools** button appears on a connection card only when a workspace id is known — that is, inside a workspace, not on the organization-wide Global Integrations page. See [Tools and permissions](/mcp-gateway/tools-and-permissions).
+</Note>
+
+## The gateway refused the call
+
+These come back from the gateway with an HTTP status. The message is what an agent, the CLI or your MCP client will surface.
+
+| Status and message | Cause | Fix |
+|---|---|---|
+| `401 unauthorized` | Missing, invalid or expired token, or the wrong scope on a non-execution route | Sign in again with `receipt setup` |
+| `403 workspace_membership_required` | The token's workspace is not one you belong to, or you lack authority for the change | `receipt workspace use` a workspace you belong to, or ask an owner or admin |
+| `403 receipt_connect_execution_scope_missing` — "Receipt could not authorize this task to use the connection. This is a task permission problem; reconnecting the account will not fix it." | The token can discover tools but not execute them: it has `connect:read` without `connect:credential` | Use a CLI session token or a task token with execution scope. Reconnecting the app changes nothing |
+| `401 receipt_connect_runtime_authentication_required` — "Receipt could not authenticate this task. Its runtime access token must be renewed before retrying." | A missing, invalid or expired token on an execution route | Renew the token; from a terminal, `receipt setup` |
+| `404 integration action not found or disabled` | The tool is unknown to the connector, or it is not on this connection's allowlist | Enable it under **Manage tools** |
+| `400 integration action '<tool>' requires connect:write` | A write tool called with a read-only token | Use a token that carries `connect:write` |
+| `400 integration action '<name>' is not available` | Saving an allowlist entry the connector does not publish | Reopen the dialog so it re-reads the connector's actions |
+
+<Warning>
+**The allowlist changes shape the first time you save it.** Before any save, reads are allowed by default and only listed writes are enabled. From the first save onward, the connection allows exactly the actions on its list — nothing else, reads included. A read that worked yesterday and returns `404 integration action not found or disabled` today is usually a save that dropped it.
+</Warning>
+
+A provider call is given 30 seconds and its response body is capped at 5 MiB, so a very large listing can fail where a narrower query succeeds.
+
+### Provider-specific refusals
+
+| Status and message | Cause | Fix |
+|---|---|---|
+| `403 GitHub repository '<owner/repo>' is not selected for this connection` | The connection restricts GitHub to selected repositories | Add the repository, or switch the connection back to **All repositories** |
+| `403 this GitHub endpoint is unavailable while selected repositories are enforced` | The endpoint is outside what repository scoping can filter | Use a repository-scoped endpoint, or turn off repository selection |
+| `409 <Label> connection exposes multiple Atlassian sites; call the explicit /ex/<product>/{cloudId}/... path` | The Atlassian grant covers more than one site, so the target is ambiguous | Call the explicit path that names the cloud id |
+| `502 <Label> connection did not expose an accessible Atlassian site` | The grant exposes no site Receipt can reach | Reconnect Atlassian and grant a site |
+
+## The connection itself is the problem
+
+| Message | Cause | Fix |
+|---|---|---|
+| `No active <Label> connection. Open Organization Settings > Integrations, connect <Label>, then retry.` | No valid connection for that provider in **this** workspace. A named connection reads `No active <Label> connection named <name>.` | Connect the app in the workspace the caller is using |
+| `409 receipt_connect_reauthorization_required` — `Your <Label> connection is no longer valid. Open Organization Settings > Integrations, reconnect <Label>, then retry.` | The provider credential was revoked, expired, or its refresh limit was exhausted | Reconnect the app. Receipt marks the row invalid before answering, so the Integrations card reads `1 saved connection needs attention`, or `<n> saved connections need attention` when the provider has more than one |
+| `<Label> connection named <name> exists as <kind> but is <status>. Open Organization Settings > Integrations and reconnect <Label>, or replace it with an active Nango-backed <Label> connection.` | A row exists but is invalid or expired — often an imported credential rather than an authorized connection | Reconnect, or replace it with an authorized connection |
+
+<Info>
+Only connections created by authorizing the provider participate in the aggregate MCP tool list, and only while their status is valid. Imported credentials are usable by other routes but are never published as MCP tools.
+</Info>
+
+## Connecting an app fails
+
+| Message | Cause | Fix |
+|---|---|---|
+| Linear: "The redirect URI provided does not match any registered URI for this client." | The message is Linear's. The callback URL is not registered on that OAuth application | Register the deployment's callback — `https://app.kentron.ai/oauth/callback` on the hosted app, `https://<your-receipt-host>/oauth/callback` on your own. Exact match, no trailing slash. This applies to any provider using custom OAuth credentials |
+| `400 Unsupported connector. Use one of: <ids>, or any integration configured in Nango.` | The provider id is not in the catalog | Use a catalog id — see [Connectors](/catalog/connectors) |
+| A `400` naming a unique key: `Nango expects an integration unique_key '<id>' for <Label>.` followed by `Set <variable> if your Nango integration uses a different unique_key.` | The integration exists under a different key in the integration service | Set the named environment variable, or create the integration under the expected key |
+| "Integrations are temporarily unavailable because the connection service is not configured. Contact your Receipt administrator." | The deployment has not configured the integration service. Operators see `503 Self-hosted Nango is not configured.` naming `RECEIPT_INTEGRATIONS_URL`, `RECEIPT_INTEGRATIONS_SECRET_KEY` and `RECEIPT_INTEGRATIONS_WEBHOOK_SECRET` | Configure those variables. Running locally, the same failure reads "Integrations are not configured for this local app." |
+| Authorization completes in the browser, but no connection appears | One cause is the signed webhook that records it being rejected: the gateway answers `401 invalid Nango webhook signature` | Align `RECEIPT_INTEGRATIONS_WEBHOOK_SECRET` with the integration service's HMAC key |
+| `502 integration_connection_delete_failed` on disconnect | The integration service refused the delete | Retry; if it persists, check that service |
+
+## Workspace and sharing errors
+
+| Message | Cause |
+|---|---|
+| `409 the Default workspace cannot be deleted` | Default is permanent |
+| `409 workspace connections must be removed before deleting the workspace` | Disconnect its apps first |
+| `409 a workspace with this name already exists` | Names are unique in an organization |
+| `403 organization owner or admin permission is required` | Creating and deleting workspaces is owner and admin only |
+| `403 workspace owner or admin permission is required` | Renaming needs authority on that workspace |
+| `404 workspace not found or unavailable` | The id is unknown, or you lost access |
+| The page reads **Workspace not found** — "This workspace does not exist, or you no longer have access to it." | Same cause, seen in the browser |
+
+An invitation that stays **Pending** with no mail delivered is usually not a gateway problem: the invitation is real and recorded, but the deployment has no mail transport configured under `AUTH_EMAIL_PROVIDER`. The share dialog offers a copyable invitation link in that case and says why no email was sent. [Workspaces](/mcp-gateway/workspaces) covers sharing in full.
+
+## Your MCP client reports an error
+
+| Code and message | Cause | Fix |
+|---|---|---|
+| `-32602 Unknown or unavailable tool` | The alias is not in the current list — the workspace changed, the connection went invalid, or the allowlist changed | Re-run `tools/list`, or restart the client |
+| `-32603 Receipt MCP discovery failed` | Tool composition failed against storage or the integration service | Retry; ask an operator to check the runtime |
+| A result with `isError: true` and "Receipt could not complete the integration tool call." | A provider or transport failure that is not one of the gateway's own errors | Retry, then check the runtime logs |
+| `receipt mcp: not signed in; run 'receipt setup' first` | No saved session for the target | `receipt setup` |
+| `receipt mcp install/status/remove currently supports codex; use 'receipt mcp config --client generic' for other clients` | Automated install exists for Codex only | Generate the generic descriptor and paste it into the client by hand |
+| `Codex MCP server 'receipt' is already installed; remove it first` | A prior install is still registered | `receipt mcp remove codex`, then install again |
+
+Tool names are opaque, and the list is recomposed from the workspace's current connections on every listing and on every call. An alias stays stable while its connection does; it stops resolving once that connection is disconnected and created again, goes invalid, or the tool leaves the allowlist. Call a name you just listed rather than one saved from an earlier session. [The aggregate server](/mcp-gateway/aggregate-server) explains how names are formed.
+
+## Signing in from the terminal
+
+| Message | Cause | Fix |
+|---|---|---|
+| `Saved session expired at <time>; run 'receipt setup' to sign in again.` | The session token lasts 12 hours | `receipt setup` |
+| `unauthorized` from `workspace`, `tools` or `mcp` | The same expiry, or a token the gateway no longer accepts — these commands never check the expiry in advance, so the gateway is what refuses | `receipt doctor` shows `EXPIRED`; then `receipt setup` |
+| `Saved Receipt session was rejected by the gateway; signing in again.` | A 401 on a saved token during a `receipt connect` command | Nothing. The CLI signs in once more and retries |
+| `receipt connect device login failed to start: rate_limited` | More than 10 sign-in starts a minute, or 3 pending at once, from one address | Wait 60 seconds |
+| `receipt connect device login expired` / `receipt connect device login timed out` | The code and the poll each last 10 minutes | Run the command again and approve promptly |
+| `receipt connect login did not return a workspace; select a Receipt workspace and try again` | The approving browser session had no active organization. The page reads `Select a workspace first` | Pick an organization in the app, then re-run |
+| `Saved session targets <saved gateway>, not <requested gateway>; run 'receipt setup' for this target.` | `receipt doctor --target` names an environment you did not sign in to | Pass the target you signed in with, or set that one up |
+
+[Signing in with receipt setup](/cli/setup) documents the login step by step, and [CLI troubleshooting](/cli/troubleshooting) covers install and observer problems that are not gateway-related.
+
+## Nothing appears in Gateway activity
+
+<Warning>
+**Calls made through the MCP bridge are not yet recorded as receipts**, so an empty dashboard does not mean the calls did not happen. Calls made by `receipt connect call`, `receipt tools call --connection` and background runs are recorded, because those go through a different route. [Gateway activity](/mcp-gateway/gateway-activity) sets out exactly what is counted.
+</Warning>
+
+The workspace **Activity** page is a narrower view still, and says so: "Tool request receipts will appear here when gateway execution reporting is available. Connection events below are live now." It lists connection lifecycle events only.
+
+## Messages from the web interface
+
+| Message | Cause |
+|---|---|
+| "Workspace authorization failed with HTTP `<n>`." / "Receipt Connect returned invalid workspace authorization." | The runtime refused the workspace token exchange — usually workspace membership |
+| "Receipt Connect session failed with HTTP `<n>`." | The runtime could not start an authorization session with the integration service |
+| "Receipt Connect catalog failed with HTTP `<n>`." | The connector catalog could not be read; connected apps stay visible while new connections are unavailable |
+| "`<error>` Showing the last synced connection state." | Connection state could not be refreshed; the page is showing the last known rows |
+| "Select an available workspace before managing integrations. No organization-wide connections are shown as a fallback." | The workspace-scoped page has no workspace selected |
+
+Next step: [review what the MCP Gateway does](/mcp-gateway/overview).

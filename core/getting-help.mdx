@@ -1,0 +1,88 @@
+---
+title: "Getting help"
+description: "Where to go when something in Receipt is wrong, which interface surfaces are not wired up yet, and how to report a security issue."
+---
+
+When something goes wrong, the fastest route is a troubleshooting page rather than a person. The documentation quotes error strings verbatim so you can search for the exact text you saw, and the CLI can diagnose its own environment. This page routes you to the right place, then tells you plainly which parts of the interface look like help but are not.
+
+The **Docs** link at the bottom of the sidebar — which opens this documentation site — is the only escalation surface the interface wires up. There is no in-app support widget, ticket form, or live chat behind it.
+
+<Warning>
+**Receipt does not ship a support address.** No screen in the product opens a support channel, and the controls that look like they will are dead links. Who to contact, and how, is something your Receipt operator configures — ask them, rather than treating those controls as evidence that a channel exists.
+</Warning>
+
+## Start with troubleshooting
+
+Before looking for a person to ask, check whether the answer is already written down.
+
+| What went wrong | Where to look |
+|---|---|
+| An error message in chat, or a run that stopped | [Errors and limits](/co-worker/errors-and-limits) |
+| A connection, a tool call, or an MCP client that will not attach | [MCP Gateway troubleshooting](/mcp-gateway/troubleshooting) |
+| A `receipt` command failing | Run `receipt doctor` first — see [doctor](/cli/doctor) — then [CLI troubleshooting](/cli/troubleshooting) |
+| A local checkout that will not start or will not pick up a change | [Local development troubleshooting](/core/local-development-troubleshooting) |
+| A deployment you run yourself where a service looks down | [Health and observability](/core/health-and-observability) |
+
+<Tip>
+On a deployment you run yourself, gate on readiness rather than liveness: the runtime's `/readyz` answers **503** while Postgres is unreachable, whereas `/healthz` returns **200** even then and reports readiness only inside the body. [Health and observability](/core/health-and-observability) lists every endpoint and what it returns.
+</Tip>
+
+## Two dead ends to know about
+
+Two places in the product look like they will connect you to someone. Neither does — every one of those buttons and links points at `#`:
+
+- The organization **Analytics & Insights** page has an **Extraction Analytics** card whose help text reads `Contact support to enable.`, followed by a **Contact us** link. The page has no sidebar or menu entry, so an owner or admin reaches it by typing `/organization/settings/analytics`.
+- The pricing page's **Enterprise** and **On-Premise Deployment** plans carry **Contact Sales** and **Get in Touch** buttons. The same Enterprise card, with the same button, sits below the plan grid on Organization settings → **Billing**.
+
+If you click one of them expecting to reach a person, that is not a bug you are hitting — the destination simply is not built.
+
+## Not yet available
+
+These surfaces exist in the interface but do nothing in this release. If you find one, you have not misconfigured anything.
+
+| Surface | Status |
+|---|---|
+| **Model Gateway → Playground** | The sidebar item resolves to a page containing a single heading, `Playground`. Nothing runs there. |
+| **Organization settings → Security** (owner or admin, URL only at `/organization/settings/security`) | **Domains**, **Single Sign-On** and **Directory Provisioning** each render a card with a permanently disabled button, an empty-state line such as `You haven't set up Single Sign-On yet.`, and the help text `This feature will be available soon for self serve.` There is no identity-provider or directory-sync implementation behind them. |
+| **Organization settings → Analytics & Insights** (owner or admin, URL only at `/organization/settings/analytics`) | The three extraction toggles — topic, sentiment/emotion, and intention — are disabled and cannot be turned on. |
+| **Guardrail enforcement** | Guardrail groups can be authored, versioned and tested against sample text, but no chat or agent path invokes enforcement, so nothing is inspected, blocked or masked in a live run. See [Guardrails](/guard/guardrails). |
+| **The Policies page modules** | Rate limiting, Budget limiting, Logging config and Tool approval store their rules as receipts; no runtime path reads them back. See [Policies](/guard/policies). The per-user chat rate limit that does run is built in and separate from these rules — see [Errors and limits](/co-worker/errors-and-limits). |
+
+<Note>
+The Policies page's Guardrails tab describes the Guardrails page as "fully connected — unlike the modules alongside it here". The second half is right; the first half is not, as far as enforcement goes. Treat [Guardrails](/guard/guardrails) as an authoring and testing surface.
+</Note>
+
+## Reporting a security issue
+
+Security reports should not go through public GitHub issues. Report them through your organization's designated security contact channel instead, and include as much of the following as you can:
+
+- The issue type — for example, buffer overflow, SQL injection, or cross-site scripting
+- The full source paths involved
+- A tag, branch, commit, or direct URL that pins the version you are reporting against
+- Any special configuration needed to reproduce it
+- Step-by-step reproduction instructions
+- Proof-of-concept or exploit code, if you have it
+- The impact, including how an attacker might exploit it
+
+That detail is what makes a report triageable quickly. If you do not get a response through the channel you used, follow up on the same private channel rather than escalating in public.
+
+## Before you report anything
+
+Two checks save most round trips:
+
+- **Confirm which host you are on.** `receipt doctor` prints the endpoint the CLI resolved, whether that endpoint answers, and the state of your saved session, without opening a browser. A command that "does nothing" is often pointed at a different deployment than the one you are looking at in the browser.
+- **Check whether the surface is one of the inert ones above.** A disabled toggle or a button that goes nowhere is documented behaviour in this release, not a broken install.
+
+<CardGroup cols={3}>
+  <Card title="What Kentron is" href="/introduction">
+    Start again from the beginning of the product tour.
+  </Card>
+  <Card title="Data handling and security" href="/guard/data-handling-and-security">
+    See how Receipt treats your data and your credentials.
+  </Card>
+  <Card title="Health and observability" href="/core/health-and-observability">
+    Check whether a service you run is actually up.
+  </Card>
+</CardGroup>
+
+Next step: [return to the Kentron Core overview](/core/overview).

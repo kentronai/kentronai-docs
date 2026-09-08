@@ -1,0 +1,120 @@
+---
+title: "Connect an app"
+description: "Connect a third-party account once for the whole organization, or inside one workspace for the CLI and MCP clients, and understand which surfaces read each."
+---
+
+Before Receipt can act on a connected app on your behalf, someone has to connect it. There are two places to do that, and they are not interchangeable: **Global Integrations** serves chat and Slack, and a workspace's **Open integrations** tab serves the CLI and MCP clients. The catalog, the cards and the connect dialog are the same on both; only the audience that can use the connection differs.
+
+<Info>
+Connecting on Global Integrations requires organization owner or admin. Inside a workspace, any member of that workspace can open the page, but connecting, disconnecting and changing a connection's tools need workspace owner or admin — authority an organization owner or admin also has in any workspace they are a member of, and every organization owner and admin is added as a member when a workspace is created.
+</Info>
+
+## Two places to connect
+
+| Where | Who reads it | Who can connect |
+|---|---|---|
+| Organization Settings > **Integrations** (titled **Global Integrations**) | Web chat and background runs started from chat; the Slack app | Organization owner or admin |
+| MCP Gateway > a workspace > **Open integrations** | The Receipt CLI and any MCP client bound to that workspace; Factory workers running a task in that workspace | Workspace owner or admin |
+
+The Teams app is the exception: it reads the organization's **Default** workspace, not Global Integrations. See [Connection scopes](/mcp-gateway/connection-scopes) for the full map.
+
+The practical consequence: connecting GitHub on Global Integrations makes it available to chat and Slack, but `receipt tools list` will not show it until GitHub is also connected inside the workspace the CLI is bound to. Sign-in binds the CLI to **Default**; [`receipt workspace use`](/cli/workspaces) moves it.
+
+<Frame caption="Global Integrations. Search, category chips and the All / Connected / Available / Popular control sit above the cards. Connected apps such as Airtable, AWS and GitHub show Manage tools and Disconnect; apps that are not connected yet, such as Anthropic and Apollo, show Connect.">
+<img src="/images/mcp-gateway/global-integrations.png" alt="The Global Integrations page in Organization Settings, with a search box, category chips, a segmented control, and a grid of integration cards where connected apps show Manage tools and Disconnect buttons and unconnected apps show a Connect link." />
+</Frame>
+
+## The Global Integrations page
+
+The page is titled **Global Integrations**, and its own description explains the scope: connected once for the whole organization and available to Receipt chat. Workspace-scoped connections for CLI and MCP clients live under MCP Gateway instead.
+
+On the page you'll find a **Search integrations** box, vendor chips for the categories in the catalog (**All**, **Development**, **Google**, **Microsoft**, **Project Management**, **Cloud & Data**, **Communication**), a segmented control for **All**, **Connected**, **Available**, and **Popular**, and cards loaded 60 at a time behind a **Load more** button that reports how many remain. **Connected** keeps only apps with a connection; **Available** keeps only apps you can connect. If nothing matches, the page says **No integrations found**.
+
+The catalog holds 63 connectable apps inside a browsable directory of about 900 entries. A card reads **Coming soon** when the app is in the directory but cannot be connected from Receipt yet.
+
+Each card tells you its state:
+
+| What the card shows | What it means |
+|---|---|
+| **Connect** (reads **Opening** while Receipt requests the authorization session) | Connectable, not connected |
+| **Manage tools** and **Disconnect** | Connected; one pair per connection made through the connect dialog |
+| `<n> connections` | More than one connection to the same app |
+| `1 saved connection needs attention` / `<n> saved connections need attention` | A connection exists but is no longer valid; reconnect it |
+| **Coming soon** | In the directory, not connectable |
+
+**Manage tools** opens the per-connection allowlist. Write operations are off until an owner or admin enables them per connection; there is no per-action approval prompt in this release. That dialog has its own page: [Tools and permissions](/mcp-gateway/tools-and-permissions).
+
+## Connecting
+
+<Steps>
+<Step title="Click Connect on the card">
+The button reads **Opening** while Receipt asks the integrations service for an authorization session, then a dialog titled `Connect <name>` appears. Its description names the boundary you are about to cross, and it depends on where you started: at the organization level it connects the app "to this organization's Global Integrations. Other organizations you belong to are not affected."; from a workspace it connects the app "only to the `<workspace>` workspace."
+</Step>
+
+<Step title="Authorize with the provider">
+The provider's own authorization interface renders inside that dialog. Receipt never builds the provider's authorize URL, and what you enter goes to the integrations service that holds provider credentials, not into Receipt's own tables.
+</Step>
+
+<Step title="Wait for the card to flip">
+On success a toast reads `<name> connected.` Receipt also polls connection state in the background for up to two minutes afterward, every five seconds, so the card still flips to connected even if the provider's webhook notification is slow to arrive.
+</Step>
+</Steps>
+
+If a connection for that provider already exists, connecting again reconnects it rather than creating a second, separate connection.
+
+<Tip>
+The catalog reloads when you return to the tab, so if the connection service was briefly unavailable while the provider's window was open, you do not need to refresh the whole page.
+</Tip>
+
+### What is stored
+
+The credentials you enter go to Nango, the integrations service Receipt runs beside itself. Receipt keeps an encrypted reference to the Nango connection — ciphertext plus the organization, the scope it was connected in, the provider, the connection name and who created it. Provider credentials stay in Nango: the browser is served only the non-secret columns, and MCP client configs and sandboxes never contain them.
+
+The connect dialog has no name field, so every connection made from the web UI is named `default`, and the disconnect dialog reads `<provider>/default`. The dialog interpolates whatever name a connection carries, so one created through the API with a custom name shows that name instead.
+
+## Connecting inside a workspace
+
+Open **MCP Gateway**, pick a workspace, and you land on its **Overview**, described as "Connections, LLM keys, and access for `<workspace>`." Three summary tiles — **Open integrations**, **LLM keys** and **Your access** — link to the three tabs below them: **Open integrations**, **LLM keys** and **Settings**. A fourth entry, **Dashboard**, sits alongside them and leads to the workspace's [Gateway activity](/mcp-gateway/gateway-activity). The **Open integrations** tile counts the distinct providers with a valid connection in this workspace; it never counts Global Integrations.
+
+The **Open integrations** tab embeds the same catalog inside the Overview page, so it has no heading of its own. Everything described above works the same way there, except that every connection belongs only to that workspace. If no workspace is selected, a warning sits above the cards: `Select an available workspace before managing integrations. No organization-wide connections are shown as a fallback.`
+
+Which workspace to connect in is the workspace your client is bound to: check with `receipt workspace current`, then run `receipt tools list` to see the new tools. The gateway advertises `listChanged: false`, so it never tells an MCP client that the tool list has changed; a client that already listed tools has to list them again. The [quickstart](/mcp-gateway/quickstart) walks through the sequence.
+
+## Disconnecting
+
+**Disconnect** on a card opens a dialog titled **Disconnect integration?** that asks `Disconnect <provider>/<name>? Receipt will revoke the provider connection and new agent tasks will immediately lose access to it.` and warns that "Existing receipts remain available for audit. This action removes only the selected named connection." The button reads **Disconnect**, then **Disconnecting** while the provider side is revoked.
+
+## Cloud accounts connected in the Agent Registry
+
+AWS, Azure and Google Cloud accounts connected from the [Agent Registry](/catalog/agent-registry) do not appear on either integrations page. The registry uses its own connection, named `agent-registry`, so that the credential it scans with is never reused as the organization's general provider connection, and the reverse holds too: connecting AWS on Global Integrations does not make the account scannable. To let the registry scan an account, use the **Integrations** button on the Agent Registry page, which opens its **Cloud integrations** dialog.
+
+## Custom OAuth apps and the callback URL
+
+Most OAuth providers work out of the box. If a provider's OAuth application was registered by the operator of your deployment with its own client credentials, that application must list Receipt's callback URL, otherwise the provider rejects the authorization before Receipt is involved. Linear, for example, answers:
+
+```text
+The redirect URI provided does not match any registered URI for this client.
+```
+
+That message comes from Linear, not from Receipt or Nango: the client id was accepted, but the redirect Nango sent is not on the application's callback list. The URL to register is your public Receipt origin followed by `/oauth/callback`:
+
+```text
+https://<your-receipt-host>/oauth/callback
+```
+
+Register it exactly: `https`, no port, no trailing slash. That is the address unless your deployment has customized the integrations service's own callback. The same rule applies to every OAuth provider on that deployment that uses custom rather than Nango-default credentials. No redeploy is needed; the provider validates the redirect at authorization time, so **Connect** works as soon as the application is saved. On the hosted app the deployment operator manages these registrations; on a self-hosted deployment, see [Integrations provider](/core/integrations-provider).
+
+## Errors you might see
+
+- **No connection yet**: `No active <Label> connection. Open Organization Settings > Integrations, connect <Label>, then retry.`
+- **Connection went stale**: `Your <Label> connection is no longer valid. Open Organization Settings > Integrations, reconnect <Label>, then retry.`
+- **Unrecognized connector name**: `Unsupported connector. Use one of: <ids>, or any integration configured in Nango.`
+- **Connection service not configured** (hosted): `Integrations are temporarily unavailable because the connection service is not configured. Contact your Receipt administrator.`
+
+The first two name Organization Settings > Integrations even when the missing connection is a workspace one; connect or reconnect in the scope the caller reads. More strings, with causes and fixes, are on the [troubleshooting page](/mcp-gateway/troubleshooting).
+
+## Asking for something not in the catalog
+
+Searching for an app that isn't in the catalog doesn't connect or enable anything. Instead, Receipt offers to file a development task to build that integration. The panel is titled **Build `<name>` with Beetle Tasks** (Beetle is the assistant's name in the interface) and explains that "New integrations are code changes": the task carries an objective for the catalog entry, Nango mapping, tests and PR evidence. The button reads **Create task** when GitHub is connected, **Connect GitHub first** when it can be connected from here, and a disabled **GitHub required** otherwise. The panel gives the reason: the worker needs GitHub to create a branch and a pull request.
+
+Next step: [organize connections into workspaces](/mcp-gateway/workspaces).

@@ -1,0 +1,100 @@
+---
+title: "Create and manage your account"
+description: "Sign up for Receipt, verify your email, sign back in, and manage your profile, password and sessions afterwards."
+---
+
+Everything below happens at `app.kentron.ai`. Sign-up is self-service on the hosted app — no invitation is required to create your own account, and opening the root URL takes you straight to the sign-up form rather than a landing page.
+
+<Warning>
+**You cannot turn two-factor authentication on from inside the product in this release.** Sign-in verifies a code from your authenticator app for accounts that already have it enrolled, but no screen exists to enrol one. Extra sign-in providers are the same: the Security page shows a single **Email & password** row and can unlink it, but offers no action to add another.
+</Warning>
+
+## Signing up
+
+<Frame caption="The sign-up form asks for three things and nothing else — there is no name field, no Google button and no guest option.">
+  <img src="/images/core/sign-up.png" alt="The Create Account page with Email, Password and Confirm Password fields above a Create Account button." />
+</Frame>
+
+<Steps>
+  <Step title="Create your account">
+    Enter your email, a password, and confirm it. Your password must be between 8 and 128 characters. Depending on what is wrong you will see `Please enter a valid email address`, `Password must be at least 8 characters`, or `Passwords do not match`.
+  </Step>
+  <Step title="Verify your email">
+    Receipt emails you a six-digit code and shows the **Check Your Email** step with a live `Expires in {time}` countdown. The code is valid for five minutes and you get five attempts. Run out and you will see `You entered too many incorrect codes. Request a new one to continue.` A wrong or stale code shows whatever the auth service reports — `Invalid OTP` or `OTP expired` — and `That code is invalid or expired. Request a new one and try again.` is the fallback for a failure that carries no message.
+  </Step>
+  <Step title="Receipt sets up your organization">
+    As soon as your account exists, Receipt creates an organization, writes its billing baseline, and grants you a one-time platform credit of $5.00.
+  </Step>
+  <Step title="Land in chat">
+    You are redirected straight to the chat page. There is no onboarding wizard to click through first.
+  </Step>
+</Steps>
+
+### What gets created with you
+
+The new organization is named after you: `<Display Name>'s Workspace`. Because the sign-up form has no name field, Receipt derives your display name from the local part of your email address — dots, underscores and hyphens become spaces, and the first letter is capitalised. Someone signing up as `ari.say@example.com` gets the display name **Ari say** and lands in **Ari say's Workspace**. Renaming yourself later on the Account page does not rename the organization.
+
+The $5.00 credit is granted once per user, not once per organization. A unique index on the credit ledger guards it, so it does not repeat if you later create a second organization or are added to someone else's. See [organizations and workspaces](/core/organizations-and-workspaces) for what that organization contains and [billing and plans](/core/billing-and-plans) for how the credit is spent.
+
+If you arrived from an invitation link instead, the sign-up form pre-fills the invited address and tells you `This invitation is tied to this email address.` — you must use that address to join. [Members and roles](/core/members-and-roles) covers invitations from the other side.
+
+## Signing back in
+
+The sign-in page greets you with **Welcome Back** / **Sign in to continue**. Bad credentials return `Invalid email or password`.
+
+<Frame caption="The sign-in page. Email and password are the only credentials it takes, and Forgot your password? sits directly under the password field.">
+  <img src="/images/core/sign-in.png" alt="The Welcome Back sign-in page with a filled Email field, a masked Password field, a Forgot your password link and a Sign in button." />
+</Frame>
+
+**Forgot your password?** starts an emailed code, not a reset link. Notice that the reset step asks only for your email, and that **Send Code** stays disabled until you type one.
+
+<Frame caption="Password recovery is a code sent by email, not a reset link — Send Code is greyed out until an address is entered.">
+  <img src="/images/core/forgot-password.png" alt="The Reset Password page, headed 'Enter your email to receive a reset code', with an empty Email field above Back and Send Code buttons." />
+</Frame>
+
+From there you enter the six-digit code on a **Check Your Email** step — `Enter the code sent to {email}.` — and then set the new one on **Create Your New Password**, confirmed with **Update Password**. A code that is not exactly six digits sends you back a step with `Enter the 6-digit code we sent you by email.` Resetting your password also revokes every existing session on your account.
+
+If your account already has two-factor authentication enrolled, sign-in inserts a **Two-step verification** step: `Before continuing, enter the code from your authenticator app.`
+
+## Account settings
+
+Your account page is at `/settings`, reached from the organization avatar in the sidebar. Unlike the organization settings pages, it is open to every signed-in user regardless of role.
+
+<Frame caption="The Account page: avatar, display name, email and interface language, each saved on its own. In the sidebar behind it, Beetle runners uses Beetle — the name the interface gives the assistant.">
+  <img src="/images/core/account.png" alt="The Account settings page showing an avatar with a Verified badge, a Display Name field, an Email field and a Language selector." />
+</Frame>
+
+| Setting | What it accepts |
+|---|---|
+| **Avatar** | JPG, PNG, WEBP or SVG, up to 10 MB. A larger file is rejected with `File exceeds limit of 10MB.` and a wrong format with `Please upload a JPG, PNG, WEBP, or SVG image.` |
+| **Display Name** | Up to 32 characters — `Please use 32 characters at maximum.` Saving confirms with `Display name saved.` |
+| **Email** | Your account address, badged `Verified` or `Unverified`. Changing it does not take effect immediately: you get `Email change request submitted. Check your inbox to finish verification.` |
+| **Language** | Your preferred interface language. |
+
+Each field saves on its own, so there is no page-level save. The menu you opened **Account** from also carries the **Sign out** entry.
+
+## Security
+
+The Security page is at `/settings/security`.
+
+<Frame caption="The Security page: connected login methods, the password panel, and every device your account is signed in on with its IP address.">
+  <img src="/images/core/account-security.png" alt="The Security settings page listing an Email and password login method, a Set password panel, and an Active sessions list with a Revoke other sessions action." />
+</Frame>
+
+**Connected login methods** shows one row, **Email & password**, with your account address. Its menu offers **Unlink** only when a second method is connected; otherwise it holds a disabled **Manage** entry, and unlinking your only method is refused with `You must keep at least one login method connected.`
+
+**Change password** asks for your current password and a new one, and warns you plainly: `You will be signed out from other sessions after changing your password.` If your account has no password yet, the same panel appears as **Set password** and skips the current-password field.
+
+**Active sessions** shows each signed-in device with its IP address and marks the one you are using as the current session. Revoke them one at a time, or use **Revoke other sessions** to clear the rest at once. With nothing else to clear you get `No other active sessions to revoke.`
+
+<Info>
+Sessions last seven days and refresh on a one-day sliding window each time you use one. A single browser keeps at most ten of them side by side.
+</Info>
+
+## On a self-hosted instance
+
+Identity works differently when you run Receipt yourself. The first account is the admin account you create in the setup wizard — `Create your admin account`, `Finish setup by creating the first admin account.` — after claiming the instance with its setup token, and a fresh instance then defaults to invite-only signups.
+
+Several of the flows above are switched off at the auth layer on a self-hosted instance: email delivery for verification and password recovery is refused with `Email verification and password recovery are disabled for self-hosted instances.`, social sign-in with `Social auth is disabled for self-hosted instances.`, changing your email address is turned off entirely, and `/auth/sign-up` redirects to the sign-in page once setup is complete. Plan on managing passwords out of band, because there is no in-product recovery path. The platform signup credit is not granted either — it exists only on the hosted app. [Self-hosting](/core/self-hosting) covers the wizard and the signup policy that goes with it.
+
+Next step: [see how organizations and workspaces divide your data](/core/organizations-and-workspaces).

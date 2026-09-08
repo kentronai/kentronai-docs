@@ -1,0 +1,141 @@
+---
+title: "Health and observability"
+description: "Probe whether a deployment is serving, read what each process writes to its logs, and send those logs and traces to your own collector."
+---
+
+A running deployment owes you three things: a way to ask whether it is up, a log stream you can read when it is not, and somewhere to send both. Receipt gives you all three — but not evenly across its two server processes. The web application and the Receipt runtime emit different things and export to different places, and knowing which is which saves you from wiring a collector that receives half a system.
+
+## Ask whether it is up
+
+| Service | Probe | What you get |
+|---|---|---|
+| Web application and gateway | `GET` or `HEAD /health` | `{"ok":true}` on `GET`; an empty `200` on `HEAD` |
+| Receipt runtime — liveness | `GET /healthz` | Always `200` |
+| Receipt runtime — readiness | `GET /readyz` | `200`, or **`503`** when Postgres does not answer |
+| Zero sync | `GET /` locally, `GET /keepalive` in the multi-service deployment | Zero's own response |
+| Integrations provider | `GET /integrations/health` through the gateway | A `200` while the provider answers |
+| Sandbox controller | `GET /health` on the controller's own port | A `200` while the controller is up |
+
+The runtime's own prefix, the durable-execution broker and the sandbox controller are private in the routing table, so a probe sent from outside gets a bare `404 Not found` rather than a health answer — see [Deploying](/core/deploying) for why that 404 is the gateway working correctly. The broker is the gap in the table above: the routing table declares `/health` for it, but no Receipt code path ever calls that path, so check it against your own broker build before you probe it.
+
+### Gate on readiness, not liveness
+
+Both runtime endpoints run the same check — open a connection to Postgres with a five-second timeout and issue `SELECT 1` — and then report it differently.
+
+`GET /healthz` returns `200` whatever that check said. It carries `ok`, `ready`, `degraded`, `uptimeSec`, `dataDir`, `processRole`, a `queue` snapshot (`version`, `total` and counts for `queued`, `leased`, `running`, `completed`, `failed` and `canceled`), `postgres`, `codexBin` and `resonateUrl`. The comment in the handler states the intent: `Health is a liveness surface, not a replay boundary.` It is deliberately bounded so that slow queue repair or receipt replay cannot make a healthy runtime look down.
+
+`GET /readyz` returns `200` or `503` from the same check, with a smaller body: `ok`, `ready`, `degraded`, `uptimeSec`, `processRole` and `postgres`. The `postgres` object carries `ok` and a `target` naming the host, database, user and `sslmode` it tried, plus an `error` holding the connection message when it failed — enough to tell a wrong host from a wrong password without printing either.
+
+<Warning>
+**Point your load balancer at `/readyz`.** `/healthz` answers `200` before the runtime can serve a request, so a probe on it will send traffic to a process that cannot reach its database. The container healthcheck shipped in the single-host compose file uses `/healthz`; treat that one as a restart trigger, not a traffic gate.
+</Warning>
+
+<Note>
+Only the `api` role binds a port and serves these endpoints. The `driver`, `worker-chat`, `worker-control` and `worker-codex` roles run the same image with no HTTP server at all — they log `runtime.worker_connected` instead of `runtime.http_listening` and have nothing to probe. Supervise them as processes and watch their Resonate registration in the logs. Roles are covered in [Processes, roles, and routing](/core/architecture).
+</Note>
+
+There is one authenticated check worth knowing: `GET /connect/nango/health`, called with a `connect:read` token, asks the runtime to reach the integrations provider on your behalf and answers `{"ok":…,"status":…,"reachable":true}`. When the provider is not configured it answers `503` with `Self-hosted Nango is not configured. Set RECEIPT_INTEGRATIONS_URL, RECEIPT_INTEGRATIONS_SECRET_KEY, and RECEIPT_INTEGRATIONS_WEBHOOK_SECRET.`
+
+## Read the runtime's logs
+
+The Receipt runtime writes **one JSON object per line**, on every role. Each line carries five reserved keys — `ts`, `level`, `service`, `event`, `message` — and any context the call site added is merged in alongside:
+
+```json
+{"ts":"2026-09-08T09:14:22.104Z","level":"info","service":"receipt-runtime","event":"runtime.http_listening","message":"Receipt server is listening","processRole":"api","url":"http://localhost:8787","port":8787}
+```
+
+`service` is always `receipt-runtime`, and `processRole` is attached to every line, so one aggregated stream from five roles stays separable.
+
+Four behaviours matter when you build a pipeline on top of it:
+
+- **Secrets are redacted before serialization.** Any context key that contains `authorization`, `cookie`, `password`, `secret`, `token` or `session` — case-insensitively, and likewise `api_key` or `access_key` with either separator — is replaced by the string `[redacted]`.
+- **Long strings are clipped** at 2,000 characters and suffixed with `...[truncated]`.
+- **Errors become objects** — `name`, `message`, `stack` — rather than a stringified throw. Circular values become `[circular]`.
+- **Severity picks the stream.** `warn` and `error` go to stderr; `debug` and `info` go to stdout.
+
+### Events worth alerting on
+
+`event` is a stable identifier, which makes it the field to alert on rather than the prose `message`. The names are grouped by prefix:
+
+| Prefix | Examples | What it tells you |
+|---|---|---|
+| `runtime.` | `runtime.configured`, `runtime.http_listening`, `runtime.worker_connected`, `runtime.shutting_down`, `runtime.startup_failed` | Process lifecycle. `runtime.startup_failed` is followed immediately by an exit — it is the one to page on |
+| `http.` | `http.unhandled_error` | A route threw and the caller received a `500` whose body is `Server error` |
+| `projection.` | `projection.sync_latency`, `projection.app_chat_sync_failed`, `projection.chat_stream_sync_failed`, `projection.computer_inventory_sync_failed`, `projection.durable_catchup_failed` | Projection rebuild health |
+| `factory.` | `factory.audit_enqueue_failed`, `factory.resume_failed`, `factory.watchdog_schedule_failed`, `factory.control_outbox_redrive_slow` | Background objective machinery. See [The Factory engine](/core/factory-engine) |
+| `resonate.` | `resonate.dispatch_error`, `resonate.queued_redrive`, `resonate.role_runtime_error` | Durable job dispatch. See [Jobs and durable execution](/core/jobs-and-durable-execution) |
+
+A single `projection.*_sync_failed` line is not an incident: a transient failure is retried, five attempts by default from a 100 ms base, tunable with `RECEIPT_PROJECTION_SYNC_MAX_ATTEMPTS` and `RECEIPT_PROJECTION_SYNC_RETRY_BASE_MS`. A rising rate is the signal.
+
+`projection.sync_latency` is the one you can build a latency alert on without a metrics pipeline. It logs at `info` with `projector`, `queueDelayMs`, `durationMs`, `totalLatencyMs` and `thresholdMs`, but only when a sync crosses 250 ms, was re-run, or failed. Lower the bar with `RECEIPT_PROJECTION_SYNC_LATENCY_LOG_THRESHOLD_MS`, or set `RECEIPT_PROJECTION_SYNC_LATENCY_LOG_ALWAYS=true` to log every sync while you are investigating.
+
+<Info>
+Not every line is JSON. A few hot paths still write plain `console` output with bracketed prefixes such as `[receipt-runtime]` and `[durable <label>]`. A log pipeline pointed at the runtime must tolerate both shapes rather than failing to parse.
+</Info>
+
+## Read the web application's logs
+
+The web application does not use that logger. It runs an Effect logger whose format and verbosity come from the environment:
+
+| Variable | Default | Effect |
+|---|---|---|
+| `EFFECT_LOG_FORMAT` | `json` when `NODE_ENV=production`, otherwise `pretty` | One of `pretty`, `json`, `logfmt`, `structured`. An unrecognized value falls back to the default rather than failing |
+| `EFFECT_MIN_LOG_LEVEL` | `Warn` | One of `All`, `Fatal`, `Error`, `Warn`, `Info`, `Debug`, `Trace`, `None`, matched case-sensitively |
+
+<Warning>
+**The default minimum level is `Warn`, so `Info` lines are dropped.** That includes the per-request `chat.request` event below whenever the request succeeded. Set `EFFECT_MIN_LOG_LEVEL=Info` if you want request logs for traffic that worked.
+</Warning>
+
+### One request, one line
+
+A chat request mints a request id and carries it through the whole turn as a single wide event — actor, thread, model, policy, stream, usage, breadcrumbs and outcome accumulated in one object. At the end it drains as exactly **one** log line named `chat.request`, at `Info`, `Warn` or `Error` depending on the outcome, annotated with `request_id`, `route`, `method`, `status`, `latency_ms`, `error_code`, `error_tag`, token counts and cost. One request, one line — you do not stitch a turn together from fragments. The Zero mutate route honours an inbound `x-request-id` header and generates one when the header is absent.
+
+The runtime is different: **no runtime HTTP route reads or emits a request id**, and there is no request-id middleware to enable. Correlate runtime work by `event`, by the job and objective identifiers in the log context, and by the receipt streams themselves — see [Receipts and streams](/core/receipts-and-streams).
+
+## Send it to a collector
+
+Set `EFFECT_OTLP_BASE_URL` to an OTLP/JSON endpoint and the web application exports logs, traces and metrics to it.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `EFFECT_OTLP_BASE_URL` | none | The collector base URL. Unset, no exporter is constructed at all |
+| `EFFECT_OTLP_HEADERS_JSON` | none | A JSON object of string headers, for an auth header for example. Malformed JSON is ignored silently rather than raised |
+| `EFFECT_SERVICE_NAME` | `receipt` | Resource service name |
+| `EFFECT_SERVICE_VERSION` | `0.0.0` | Resource service version |
+
+The exporter also stamps a `deployment.environment` resource attribute from `NODE_ENV`.
+
+<Warning>
+**OTLP export covers the web application only.** The Receipt runtime has no exporter of its own, so its roles are observable through stdout and stderr — collect them at the container level.
+
+No `OTEL_*` variable is read anywhere in the codebase. The standard OpenTelemetry names do nothing here; use the `EFFECT_` names above.
+</Warning>
+
+## PostHog is an error drain, not analytics
+
+Receipt's PostHog integration exists to catch exceptions, and it is configured to do only that. The browser client initializes with autocapture off, page views and page leaves not captured, session recording disabled and surveys disabled — it then starts exception autocapture. The only other browser sends are explicit exception captures for client-side failures that never reached the server. On the server, only **finalized chat request failures** are mirrored; a successful request is never sent.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `POSTHOG_PROJECT_API_KEY` | none | Enables the drain. Without it no client is constructed |
+| `POSTHOG_HOST` | `https://us.i.posthog.com` | Ingest host |
+
+Release and environment metadata are read from `RAILWAY_GIT_COMMIT_SHA` or `GITHUB_SHA`, and `RAILWAY_ENVIRONMENT_NAME` or `NODE_ENV`.
+
+<Warning>
+**Self-hosted deployments send nothing to PostHog.** The key is discarded before the client is built when the instance mode is self-hosted, so setting `POSTHOG_PROJECT_API_KEY` there has no effect.
+
+`POSTHOG_PROJECT_ID` and `POSTHOG_PERSONAL_API_KEY` are inert everywhere: they feed a source-map upload helper that nothing in the build calls.
+</Warning>
+
+## There is no metrics endpoint
+
+Neither the web application nor the runtime exposes `/metrics`, and nothing in Receipt serves Prometheus. Application metrics leave a deployment only through the OTLP exporter above, from the web application.
+
+The durable-execution broker serves its own metrics port — `RESONATE_METRICS_PORT`, default `9090` — but that is the broker reporting on itself, not Receipt reporting on your organization's work.
+
+For what happened inside a run, the answer is not a metrics scrape: it is the receipt stream, which is complete by construction and replayable. See [Receipts and streams](/core/receipts-and-streams).
+
+Locally, the supervisor writes one file per service under `.deploy-artifacts/start-all/<runId>/`, and its error messages name the file to open — [Local development](/core/local-development) has the layout.
+
+Next step: [find the right place to ask for help](/core/getting-help).

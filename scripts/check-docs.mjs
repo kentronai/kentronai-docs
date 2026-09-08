@@ -97,6 +97,21 @@ for (const f of files) {
   }
 }
 
+// --- images ----------------------------------------------------------------
+// Every /images/... reference (markdown image, <img src>, or <Frame> child)
+// must resolve to a file on disk. Mintlify serves a missing image as a broken
+// picture without failing the build, so this is the only place it is caught.
+for (const f of files) {
+  const text = readFileSync(join(ROOT, f), 'utf8')
+  const refs = [
+    ...[...text.matchAll(/!\[[^\]]*\]\((\/images\/[^)\s]+)\)/g)].map((x) => x[1]),
+    ...[...text.matchAll(/src="(\/images\/[^"]+)"/g)].map((x) => x[1]),
+  ]
+  for (const r of refs) {
+    if (!existsSync(join(ROOT, r))) fail(`image: ${f} references ${r} which does not exist`)
+  }
+}
+
 // --- redirects -------------------------------------------------------------
 for (const r of config.redirects ?? []) {
   const src = r.source.replace(/^\//, '')

@@ -1,0 +1,123 @@
+---
+title: "Errors and limits"
+description: "Every user-visible chat error, quoted exactly as it appears, with what it means and what to do about it."
+---
+
+This page exists so you can search for the exact text you saw. Every message below is quoted verbatim from Receipt — if what's in front of you doesn't match one of these strings exactly, it's a different error than the one you're thinking of.
+
+Most of them appear in a banner at the top of the message box — a warning triangle and red text, with a **Dismiss error** control on the right. A background run that stops early reports itself differently, as a message inside the thread; those strings are listed further down under routing and background runs.
+
+## Access and session
+
+| Message | Meaning | What to do |
+|---|---|---|
+| `Please sign in and try again.` | You're not authenticated for this action. | Sign in again and retry. |
+| `Your request was invalid. Refresh and try again.` | The request didn't match what the server expected. You also get this if you edit or regenerate a message while the thread is still generating a response. | Refresh the page and try again, or wait for the current response to finish. |
+| `This chat thread could not be found.` | The thread id no longer resolves to a thread you can reach. | Return to chat history and reopen the thread from there. |
+| `You do not have access to this chat thread.` | The thread exists, but not for the account or organization you're currently signed in as. | Switch to the right account or organization and retry. |
+| `This chat changed in another tab or session. Refresh and try again.` | Your branch version and the thread's real version couldn't be reconciled automatically. | Refresh and retry the action. |
+| `This message can no longer be edited. Refresh and try again.` | The message is no longer on the canonical path, or is otherwise stale. | Refresh to reload the current branch before editing again. |
+
+## Model and provider
+
+| Message | Meaning | What to do |
+|---|---|---|
+| `The selected AI model is not allowed for your organization.` | Your organization's model policy blocks this model. | Ask an owner or admin to check the organization's [model policy](/llm-gateway/model-policy). |
+| `This model requires a paid plan to use.` | The copy for a plan-restricted model. | See the note below — this message currently can't occur. |
+| `This provider requires an organization API key, but no key is configured.` | This model's provider needs your organization's own API key (BYOK), and none is set. | Add a provider key in [BYOK settings](/llm-gateway/bring-your-own-key), or use a model from a provider that doesn't need one. |
+| `Unable to connect to the AI service. Verify that your organization OpenAI API key is valid.` | Your organization's configured key was rejected by the provider. | Check and, if needed, replace the key in BYOK settings. |
+| `This model cannot be used with your organization provider API key. Choose another model from that provider or remove the provider key.` | The configured provider key doesn't cover this specific model. | Pick a different model from that provider, or remove the key. |
+
+<Note>
+Like the file-upload message further down this page, `This model requires a paid plan to use.` runs through the same no-paywall contract: the check that decides whether a model is locked to a plan currently returns "allowed" for every model regardless of plan, and the composer has no model picker in this release. So this message can't currently appear either.
+</Note>
+
+## The context limit
+
+Receipt words the context-limit condition slightly differently depending on where it's telling you about it — treat all three as the same underlying limit.
+
+| Where you see it | Exact text |
+|---|---|
+| Banner, with the window size filled in | `This conversation has reached its current context limit ({maxTokens} tokens). Start a new chat to continue.` |
+| Banner, standing message before you send | `This conversation has reached its current context limit. Start a new chat to continue.` |
+| Server response body, not shown on screen | `This conversation has reached the current context limit.` |
+
+When the model has a larger **Max** context window available to switch into, the wording changes instead:
+
+| Where you see it | Exact text |
+|---|---|
+| Banner, with the window size filled in | `This conversation has reached the standard context limit ({maxTokens} tokens). Switch to Max to continue with the larger window.` |
+| Banner, standing message before you send | `This conversation has reached the standard context limit. Switch to Max to continue with the larger window.` |
+| Server response body, not shown on screen | `This conversation has reached the standard context limit. Switch to Max to continue with the larger window.` |
+
+The standing message is the one you'll usually meet, because it appears before you send: once the previous response's reported usage has reached the window, the banner shows it and **Send** stays blocked. The version with the window size filled in replaces it when you send anyway — the composer estimates the prompt first, and the server repeats the check and refuses the turn with HTTP 413. Both estimates count roughly one token per four characters of text. The server's own wording, in the third row, travels in the error response body and is never rendered; what you read on screen is always the version carrying the token count.
+
+What to do either way: start a new chat, or switch to **Max** if that control is available on the model you're using.
+
+## Rate limits, quota, and credit
+
+| Message | Meaning | What to do |
+|---|---|---|
+| `Too many requests. Please wait about {retryAfterSeconds} seconds and retry.` | You've hit the rate limit. | Wait the stated number of seconds, then retry. |
+| `This seat has exhausted its current AI usage allowance. Please wait until the monthly reset and try again.` | Your seat has used its metered allowance for this billing cycle. | Wait for the reset, or talk to an admin about the plan. See [Usage and spend](/llm-gateway/usage-and-spend). |
+| `Your free chat allowance is exhausted for now. Upgrade for more access or wait and try again.` | A free-tier allowance has run out. | See the note below — this message currently can't occur. |
+| `Your $5 platform credit has been used. Add an optional provider key in Billing & Credits to continue without platform credit.` | The one-time platform credit is spent. A free organization is funded by that credit alone, so it doesn't come back. | Add an organization [provider key](/llm-gateway/bring-your-own-key) in Billing & Credits. |
+
+<Note>
+Rate limiting is a **60-second window, 30 requests**, per user. There's a separate, more restrictive free-tier rate limit (10 requests per 60 seconds) and a free allowance (100 requests per 24 hours) defined in the product, but the check that would route a request onto that free-tier path currently always returns false — so every request is evaluated against the 30-requests-per-60-seconds limit above, and the free-allowance-exhausted message can't currently appear.
+</Note>
+
+The counters live in the database, so every server replica shares them. A deployment you run yourself that sets `VITE_DISABLE_REDIS=true` swaps in an adapter that allows every request, so no rate limit applies at all. The window and the count can be changed with `PAID_CHAT_RATE_LIMIT_WINDOW_MS` and `PAID_CHAT_RATE_LIMIT_MAX_REQUESTS`; a value that isn't a positive integer is rejected with `Expected {NAME} to be a positive integer`.
+
+## Server and stream failures
+
+| Message | Meaning | What to do |
+|---|---|---|
+| `The AI provider is currently unavailable. Please retry.` | The model provider itself is having trouble. | Retry in a moment. |
+| `A tool failed while processing your request.` | A tool call failed mid-turn. | Retry the request. |
+| `Your message could not be saved. Please retry.` | The message, or the rate-limit bookkeeping behind it, couldn't be persisted. | Retry sending it. |
+| `The response stream failed. Please retry.` | The streaming response was interrupted after it started. | Retry the request. |
+| `We ran into a server problem while generating your response. Please try again in a few moments.` | Generic fallback for an unclassified server error. | Try again shortly. |
+
+Two more strings for the same kinds of failure are written by the server rather than translated from a key, and they reach you by different routes. `Something went wrong on our side while generating the response. Please try again.` is saved as the assistant's message when a turn fails without producing text, so you read it in the thread; a rejected provider key saves `Unable to connect to the AI service. Verify that your organization OpenAI API key is valid.` there instead. `The assistant response failed while streaming. Please retry.` is the fallback text for a broken stream: it rides along in the error response body, and it reaches the banner only when the same stream failure is reported twice.
+
+## Routing and background runs
+
+When a turn needs a background run, a failure arrives as an assistant message in the thread rather than a banner — the last row below is the one exception. Beetle, in these messages, is the assistant's name in the interface. [Background runs](/co-worker/background-runs) explains each situation and how to recover; the strings are repeated here so you can find them.
+
+| Message | Meaning | What to do |
+|---|---|---|
+| `Receipt couldn't determine the access needed for this request. Please retry; no task was started.` | **Routing.** Receipt asked its router which connections the turn needs, asked once more to review the answer, and got nothing usable either time. It refused the turn rather than guess. | Send the message again. Nothing was queued and nothing ran. |
+| `Beetle stopped before completing this response.` | The run ended without a normal answer. A `Status:` line and a `Reason:` line follow, then `This was reported by the Beetle runtime; it was not a normal completed answer.` A status of `canceled` means you stopped it. | Read the reason. Retry, or open [Replay](/co-worker/replay) to see where it stopped. |
+| `The Factory computer runtime is not available, so this objective did not run to completion.` | No computer could be obtained for the run. A `Runtime reason:` line follows. | On the hosted app, retry later. On your own deployment, follow the message's own advice and check the OpenSandbox controller and the Receipt stack. |
+| `{Provider} is not connected in Global Integrations yet.` | The run needed an app your organization hasn't connected. | Connect the app, then retry. See [Connect an app](/mcp-gateway/connect-an-app). |
+| `I cannot confirm {Provider} is connected right now because Receipt Connect status could not be checked.` | Receipt couldn't reach the connection status service, so it can't tell whether the app is connected. | Retry. If it persists, check the Integrations page. |
+| `{Provider} is connected in Global Integrations, but you don't have access to any enabled {Provider} tools right now.` | The app is connected, but no tool is enabled on it. | An owner or admin enables the tool under **Manage tools**. See [Tools and permissions](/mcp-gateway/tools-and-permissions). |
+| `This task is stopped.` | You pressed **Stop generation**; the run and its jobs were cancelled. | Nothing. |
+| `Stopped the response, but could not cancel the agent run.` | The stream closed, but the cancel request to the runtime failed. This one appears in the banner, not in the thread, and a runtime that returned its own error message shows that message instead. | Cancel the run from the [Tasks page](/co-worker/objectives-and-tasks), where the confirmation reads **Cancel task**. |
+
+The routing message reads the same everywhere, but reaches you differently by channel. On the web it is the `Reason:` line of the `Beetle stopped before completing this response.` block. In [Slack](/co-worker/slack) it is posted as a threaded reply that starts with a mention of you, and the refusal is recorded as a `slack.thread.routing_failed` receipt. [Teams](/co-worker/teams) is the exception: it does not refuse, and starts a background run anyway.
+
+## File uploads
+
+| Message | Meaning | What to do |
+|---|---|---|
+| `File uploads are available on paid plans only. Upgrade to attach files in chat.` | The plan-gate copy for file uploads. | See the note below. |
+
+<Note>
+As covered on [Files and attachments](/co-worker/files-and-attachments), file uploads are not actually plan-gated in this release — the check behind this message currently always allows the upload, so you shouldn't see it in practice. The size and count limits on that page (10 MB per file, 10 files per message) do apply.
+</Note>
+
+## Route-level failures
+
+A small set of failures happens at the chat route itself, before the turn starts: something fundamental — your session, your request body, or your organization context — didn't check out. On screen you get the matching message from the tables above, usually `Please sign in and try again.` or `Your request was invalid. Refresh and try again.` The route's own wording is carried in the error response body next to the TraceID, so it's what you'll find if you look at the failed request in your browser's network panel or in a server log:
+
+`Unauthorized`, `Organization context is required`, `Invalid JSON body`, `Validation failed`, `Failed to resolve access policy`, `Workspace is unavailable`, and, when a tab tries to rejoin a response that is still streaming, `Missing threadId query param`.
+
+## The TraceID
+
+Whenever an error carries a server-issued request id, the error banner shows a **Show TraceID** control you can expand to reveal the trace identifier under a **TraceID** label; clicking the identifier copies it. If you're reporting a problem, copying and including that TraceID gives whoever investigates it a precise anchor into the request that failed.
+
+If the string in front of you is not on this page, [ask for help or report a problem](/core/getting-help).
+
+Next step: [go back to what Kentron is](/introduction).
