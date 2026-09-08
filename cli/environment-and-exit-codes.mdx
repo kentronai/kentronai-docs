@@ -20,11 +20,11 @@ Every command that reaches a server resolves two URLs first: the **gateway**, wh
 The target word is validated **before** any override is applied. `receipt setup --target staging-2 --server-url https://gw.example.com` fails with `receipt connect target must be prod, dev, local, or an http(s) URL`, even though `--server-url` would otherwise have decided the host. Pass a URL, or one of the three names.
 </Warning>
 
-Not every command accepts every flag. `setup`, `login` and `doctor` take `--target`, `--server-url` and `--auth-url`. The `receipt connect` family takes `--server-url` and `--auth-url` plus a positional target word or URL. `tools` and `mcp` take `--server-url` as a gateway override only. `workspace` takes `--target` and nothing else. `import` and `observe` take `--target` to choose which saved session uploads.
+Not every command accepts every flag. `setup`, `login` and `doctor` take `--target`, `--server-url` and `--auth-url`. `receipt connect status|<connector>|disconnect` take `--server-url` and `--auth-url` plus a positional target word or URL. `receipt connect list|tools|call` take `--server-url` and `--target`, and no `--auth-url` — they never sign in. `tools` and `mcp` take `--server-url` as a gateway override, plus `--target` to pick which saved session to send. `workspace` takes `--target` and no URL override. `import` and `observe` take `--target` to choose which saved session uploads.
 
 ### The prod chain
 
-First non-empty value wins. For `prod` only, any value whose host is `localhost`, `127.0.0.1` or `::1` is discarded as you go — in the gateway chain and in the sign-in chain alike.
+First non-empty value wins. For `prod` only, a value whose host is `localhost`, `127.0.0.1` or `::1` is discarded — and discarding it skips the rest of the environment chain rather than handing the turn to the next variable, so resolution continues at step 4. The sign-in chain filters local hosts the same way.
 
 | Step | Source |
 |---|---|
@@ -63,7 +63,7 @@ The released binary reads no `.env` file of any kind. `--target local` therefore
 | `dev` | `RECEIPT_CONNECT_DEV_AUTH_URL`, `RECEIPT_CONNECT_DEV_URL`, `RECEIPT_DEV_APP_URL` |
 | `local` | `RECEIPT_CONNECT_LOCAL_AUTH_URL`, `RECEIPT_AUTH_URL`, `BETTER_AUTH_URL`, `VITE_BETTER_AUTH_URL`, else `http://127.0.0.1:` plus `WEB_PORT` or `3000` |
 
-Because the hosted default only ever reaches the sign-in origin through that last resort, the hosted app has to serve both the sign-in page and `/connect/*` on one origin — and it does. Set the sign-in origin to exactly the origin your browser uses, or approval fails on a missing cookie.
+Because the hosted default only ever reaches the sign-in origin through that last resort, the hosted app has to serve both the sign-in page and `/connect/*` on one origin — and it does. Point the CLI at exactly the origin your browser is signed in to: the approval page redirects to `/auth/sign-in` whenever the request carries no session for that origin.
 
 ### How two URLs are compared
 
@@ -83,9 +83,9 @@ Every write goes to a temporary file at mode `0600` and is then renamed into pla
 `RECEIPT_CLI_SESSION_FILE` does two things, not one. It sets the active session path **and** suppresses the per-target files entirely. That makes it the right variable for isolating a CI run, and the wrong one to point at a path two jobs share.
 </Warning>
 
-When a command asks for a target, the matching per-target file is read first, and the active file only if its own target normalizes to the same name. A file that will not parse, or that is missing its gateway URL, token or organization id, reads as *no session* rather than as an error — but a file you cannot read for another reason, a permissions problem for instance, throws and exits `1`.
+When a command asks for one of the three named targets, the matching per-target file is read first, and the active file only if its own target normalizes to the same name. Ask for a URL instead and no per-target file exists, so whatever the active file holds is used. A file that will not parse, or that is missing its gateway URL, token or organization id, reads as *no session* rather than as an error — but a file you cannot read for another reason, a permissions problem for instance, throws and exits `1`.
 
-Expiry is decided locally: the CLI decodes the token's payload and compares its expiry with the clock. It never verifies the signature, and a payload it cannot read is treated as live. There is no refresh — after the twelve hours, `setup`, `login` and the `connect` family re-run the browser login, while `workspace`, `tools` and `mcp` simply receive `unauthorized` from the gateway.
+Expiry is decided locally: the CLI decodes the token's payload and compares its expiry with the clock. It never verifies the signature, and a payload it cannot read is treated as live. There is no refresh — after the 12 hours, `setup`, `login` and the `connect` family re-run the browser login, while `workspace`, `tools` and `mcp` send the dead token and fail on the gateway's `401`: `unauthorized` from the workspace, connection-list and MCP routes, and `Receipt could not authenticate this task. Its runtime access token must be renewed before retrying.` from `/connect/tools` and `/connect/call`.
 
 ## Environment variables
 
@@ -110,6 +110,7 @@ Expiry is decided locally: the CLI decodes the token's payload and compares its 
 |---|---|---|
 | `RECEIPT_CONNECT_TOKEN` | `connect list\|tools\|call`; `tools` and `mcp serve` | The bearer token to present |
 | `RECEIPT_CONNECT_GATEWAY_URL`, `RECEIPT_PROXY_SERVER_URL` | `connect list\|tools\|call` | The gateway to present it to |
+| `RECEIPT_CONNECT_GATEWAY_URL`, `RECEIPT_CONNECT_PUBLIC_GATEWAY_URL` | `tools`, `mcp serve` | The gateway for the environment fallback |
 | `RECEIPT_CONNECT_ORGANIZATION_ID` | `tools`, `mcp serve` | Required for the environment fallback |
 | `RECEIPT_CONNECT_WORKSPACE_ID`, `RECEIPT_CONNECT_WORKSPACE_NAME` | `tools`, `mcp serve` | Optional; label the workspace in the envelope |
 
@@ -119,11 +120,11 @@ Precedence is **not** uniform, and this is the trap:
 - `receipt tools` and `receipt mcp serve` — the saved session wins, and the environment is the fallback. `--server-url` here replaces the gateway while still sending the session token, with no host check; see [Tools and MCP](/cli/tools-and-mcp).
 - `receipt workspace`, and `receipt connect status|<connector>|disconnect` — no environment fallback at all. They require a saved session.
 
-`setup` and `login` also export the session's gateway, token, organization, workspace and user id into **their own process** and nowhere else. Nothing reaches your shell.
+`setup` and `login` also set `RECEIPT_CONNECT_GATEWAY_URL`, `RECEIPT_CONNECT_PUBLIC_GATEWAY_URL`, `RECEIPT_CONNECT_TOKEN`, `RECEIPT_CONNECT_ORGANIZATION_ID`, `RECEIPT_CONNECT_WORKSPACE_ID`, `RECEIPT_CONNECT_WORKSPACE_NAME` and `RECEIPT_CONNECT_USER_ID` in **their own process**, and only where you have not set them yourself. Nothing reaches your shell.
 
 ### Companion and client tools
 
-`CODEX_HOME` locates the Codex configuration for `receipt mcp install|status|remove`. `RECEIPT_CLAUDE_PROXY_BIN` and `CLAUDEN_BIN` override the Claude observer companion binary, which is otherwise found on `PATH`.
+`CODEX_HOME` locates the Codex configuration for `receipt mcp install|status|remove`. `RECEIPT_CLAUDE_PROXY_BIN` and `CLAUDEN_BIN` override the Claude observer companion binary, which is otherwise looked for beside the CLI itself and then on `PATH`.
 
 ### Not read
 
@@ -135,6 +136,7 @@ Give the run an identity and a private config directory, and stop a stray comman
 
 ```bash
 export RECEIPT_CONNECT_GATEWAY_URL="https://<your-receipt-host>"
+export RECEIPT_CONNECT_PUBLIC_GATEWAY_URL="https://<your-receipt-host>"
 export RECEIPT_CONNECT_TOKEN="$CI_RECEIPT_TOKEN"
 export RECEIPT_CONNECT_ORGANIZATION_ID="$CI_RECEIPT_ORG"
 export RECEIPT_CLI_CONFIG_DIR="$RUNNER_TEMP/receipt"
@@ -144,7 +146,7 @@ receipt doctor --json
 receipt connect list --json
 ```
 
-With both gateway and token set, `receipt connect list|tools|call` never touches the config directory at all, and `receipt tools` falls back to the same variables when no session file exists. Gate the job on `receipt doctor --json` and its exit code rather than on parsing text.
+Two gateway variables, because two code paths read different ones: `receipt connect list|tools|call` reads `RECEIPT_CONNECT_GATEWAY_URL`, while the `prod` chain that `doctor`, `setup` and `login` resolve reads `RECEIPT_CONNECT_PUBLIC_GATEWAY_URL`. With gateway and token both set, `receipt connect list|tools|call` never touches the config directory at all, and `receipt tools` falls back to the same variables when no session file exists. Gate the job on `receipt doctor --json` and its exit code rather than on parsing text.
 
 ## Exit codes
 
@@ -155,10 +157,10 @@ With both gateway and token set, `receipt connect list|tools|call` never touches
 
 There is no third code from the program itself. Two you may still see come from outside it:
 
-- **`137` on the very first run**, with no output. macOS killed the binary over its code signature. Reinstall with the installer script rather than downloading and unpacking the archive by hand; see [Install the CLI](/cli/install).
+- **`137`, with no output.** macOS killed the binary before it ran — a quarantined copy, or, far more rarely, a published build whose own ad-hoc signature is malformed. Reinstall with the published installer ([Install the CLI](/cli/install)); [CLI troubleshooting](/cli/troubleshooting) tells the two apart and gives the `xattr` fix.
 - **`127` from the developer CLI**, with `receipt CLI requires Bun. Set RECEIPT_BUN_BIN or install Bun on PATH.` — that is the in-repo shell wrapper, not the released binary.
 
-Results *and* progress lines both go to standard output; only the final error message goes to standard error. That includes lines like `Starting Receipt Connect sign-in at <authUrl>...`, `Step 1 of 2: sign in to Receipt` and `Saved Receipt session was rejected by the gateway; signing in again.` — so parse the `--json` forms, never the text.
+Results *and* progress lines both go to standard output — that includes lines like `Starting Receipt Connect sign-in at <authUrl>...`, `Step 1 of 2: sign in to Receipt` and `Saved Receipt session was rejected by the gateway; signing in again.`, so parse the `--json` forms, never the text. Standard error carries only the message a failing command ends with, plus `claude observer failed to start: <message>` when `observe` cannot spawn the companion binary.
 
 ## Output shapes
 
@@ -177,16 +179,16 @@ The envelopes:
 | `doctor` | `{ok, target, gatewayUrl, authUrl, mcpUrl, session, gateway, auth, nextSteps}` |
 | `setup` | `{ok, receiptAccount, connectors, claudeObserver}` |
 | `login` | `{ok, reused, target, gatewayUrl, userId, userEmail, organizationId, workspaceId, workspaceName, sessionFile, targetSessionFile}` |
-| `workspace` | `{ok, workspace}`, `{ok, currentWorkspaceId, workspaces}`, or `{ok, deleted, workspaceId}` |
+| `workspace` | `{ok, workspace}`, `{ok, currentWorkspaceId, workspaces}`, or `{ok, deleted, workspaceId}`; `use` adds `sessionFile` and `targetSessionFile` |
 | `tools` | `{ok, ...result, workspace}` |
 | `mcp config` | `{ok, client, config, content, output}` |
 | `connect list` | `{ok, connections}` |
-| `import`, `observe` | `{ok, source, importId, stream, sourcePath, mode, follow, storage, counts}` |
+| `import`, `observe` | `{ok, source, importId, stream, sourcePath, mode, follow, storage, counts}`, plus `cloud: {gatewayUrl, organizationId}` when a saved session uploads the receipts to Receipt instead of the local store |
 
 <Note>
-On `receipt tools`, `ok: true` means the gateway answered — not that the provider succeeded. A provider-side failure comes back inside the result as error content.
+On `receipt tools`, `ok: true` means the gateway answered — not that the provider succeeded. A provider-side failure comes back inside the result as `isError` content.
 </Note>
 
-`--output` and `--output-file` redirect an envelope to a file and print `{ok: true, outputFile, bytes}` instead. On `tools` and `mcp config` the write is atomic and mode `0600`; on `import` and `observe` it is a plain write at your umask. `doctor`, `setup`, `login`, `workspace` and the `connect` commands have no output-file flag.
+`tools` takes `--output` or `--output-file`, writes the envelope atomically at mode `0600`, and prints `{ok: true, outputFile, bytes}` instead. `mcp config` takes the same two flags and the same atomic write, but prints `receipt mcp config: wrote <path>` — or, with `--json`, its usual envelope carrying the path in `output`. `import` and `observe` take `--output-file` only, write it plainly at your umask, and print the same `{ok: true, outputFile, bytes}` pointer. `doctor`, `setup`, `login`, `workspace` and the `connect` commands have no output-file flag.
 
 Next step: [look up an error string and its fix](/cli/troubleshooting).

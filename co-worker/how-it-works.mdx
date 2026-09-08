@@ -10,7 +10,7 @@ Every message you send does one of three things: it gets an answer written for i
 A web turn arrives as one `POST /api/chat` request and passes a fixed series of gates before any model is called. If a gate refuses, the turn ends there with one of the messages in [errors and limits](/co-worker/errors-and-limits).
 
 1. **Sign-in and access.** An active organization, membership of the [workspace](/core/organizations-and-workspaces) that organization resolves to, and a thread you can see.
-2. **Rate limit.** 30 requests per minute per user, applied only when Redis is enabled.
+2. **Rate limit.** 30 requests per minute per user, counted in Postgres and switched off entirely by `VITE_DISABLE_REDIS=true`.
 3. **Model policy.** The [LLM Gateway](/llm-gateway/model-policy) resolves the thread's model and whether provider and compliance policy allows it. Every denial happens here, before a provider is contacted.
 4. **Context window.** The conversation must fit the active model's window.
 5. **Spend reservation.** Quota is reserved before the model call and settled from what it used. See [usage and spend](/llm-gateway/usage-and-spend).
@@ -19,7 +19,7 @@ Receipt then takes a **capability snapshot**: a read-only look at the organizati
 
 ## The routing decision
 
-The router is a single model call whose only job is to classify. Its system prompt is one sentence: "You are the Beetle chat router. Return one routing decision only; do not perform tool work and do not write any user-facing answer, greeting, acknowledgement, or status update." (Beetle is the assistant's name in the interface.) It returns one JSON decision and nothing else, so no words it produces reach your thread.
+The router is a single model call whose only job is to classify. Its system prompt is one sentence: "You are the Beetle chat router. Return one routing decision only; do not perform tool work and do not write any user-facing answer, greeting, acknowledgement, or status update." ([Beetle](/introduction) is the interface's name for the assistant.) It returns one JSON decision and nothing else, so no words it produces reach your thread.
 
 The rules it is given explain most surprises:
 
@@ -99,13 +99,13 @@ flowchart TD
 A run does not see everything in Receipt. Its context comes from four bounded sources.
 
 - **The conversation.** At most 8 prior messages, each cut to 2,000 characters, 8,000 characters in total. A background run's problem statement carries that transcript and, on a react, the bound objective's latest summary and output.
-- **Attachments.** Images and PDFs reach the model natively when the active model supports that input; every other type, spreadsheets and documents included, arrives only as converted text. Organization knowledge is added only when an admin has switched it on, and only from documents marked active and already indexed. See [files and attachments](/co-worker/files-and-attachments) and [Org Brain](/catalog/org-brain).
+- **Attachments.** Images and PDFs reach the model natively when the active model supports that input; every other type, spreadsheets and documents included, arrives only as converted text. Organization knowledge is added only once an owner or admin has activated at least one indexed document; there is no separate toggle. See [files and attachments](/co-worker/files-and-attachments) and [Org Brain](/catalog/org-brain).
 - **The capability snapshot.** A run is scoped to the apps the router selected for that turn. The wider inventory of connected apps is discovery, not a request: the runtime ignores it as a dependency source, so a run is never handed every connection as a fallback.
 - **Enabled skills**, snapshotted when the task packet is written.
 
 Memory is receipt-backed: each scope is its own stream, and commits, reads and forgets are recorded as events. A run started from chat carries the scope `factory-chat:auto`, resolved at run time to the objective's own scope, or to the profile's when nothing is bound yet. A task also gets read-only scopes for its worker type and the shared repository, plus objective, task, candidate and integration scopes; audits commit to their own, which is how a later run draws on an earlier one. Web chat does **not** inject preference memory — nothing in the chat path reads durable user preferences into the prompt; that surface belongs to the runtime and its CLI.
 
-Enabled skills are mounted as a read-only tree with a compact catalog beside it: files at mode `0444`, directories at `0555`, replaced only by the controller between packets, so a run already under way does not see a later enable or disable. Receipt does not rank skills for the agent; the catalog skill tells it to "Select the smallest relevant set using the task, plan, and catalog metadata" and to read each chosen skill completely first. A patch touching that tree is rejected as a Receipt operational path, and no receipt records which skill was read. See [Skills](/catalog/skills).
+Enabled skills are mounted as a read-only tree with a compact catalog beside it: files at mode `0444`, directories at `0555`, replaced only by the controller between packets, so a run already under way does not see a later enable or disable. Receipt does not rank skills for the agent. A catalog skill mounted beside them says to "Select the smallest relevant set using the task, plan, and catalog metadata" and to read each chosen skill completely first, but nothing in the task prompt points the agent at that catalog skill. A patch touching that tree is rejected as a Receipt operational path, and no receipt records which skill was read. See [Skills](/catalog/skills).
 
 ## Tools inside the computer
 
@@ -137,7 +137,7 @@ Three things do enter the computer: an OpenAI key as the agent's auth file — y
 | Tool approval, rate-limit and budget rules ([Policies](/guard/policies)) | Nowhere on this pipeline | Stored, not read |
 
 <Warning>
-**Guardrail groups and the Policies modules are not applied anywhere on this pipeline in this release.** No step of a turn or a run calls the guardrail enforcement service, and no runtime code reads tool-approval, rate-limiting or budget rules. Nor is there a per-action approval prompt: once an owner or admin enables a write operation on a connection, a delivery run can call it.
+**Guardrail groups and the Policies modules are not applied anywhere on this pipeline in this release.** No step of a turn or a run calls the guardrail enforcement service, and no runtime code reads tool-approval, rate-limiting or budget rules. Nor is there a per-action approval prompt ([tools and permissions](/mcp-gateway/tools-and-permissions)).
 </Warning>
 
 Slack and Teams do not pass through the web gates; their mentions go to the runtime's channel-neutral routing and response routes, which need an organization OpenAI key before anything runs. For the machinery underneath, see [architecture](/core/architecture) for the runtime's process roles, [jobs and durable execution](/core/jobs-and-durable-execution) for how a job survives a crash, and [Factory engine](/core/factory-engine) for the engine itself.

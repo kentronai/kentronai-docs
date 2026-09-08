@@ -24,7 +24,7 @@ export PATH="$HOME/.local/bin:$PATH"
 <Note>
 On macOS, install through the script rather than downloading a release tarball in a browser. The release binaries carry an ad-hoc code signature and are not notarized, and a browser download also arrives with a macOS quarantine attribute — the combination Gatekeeper refuses to run. A `curl … | bash` install sets no quarantine attribute.
 
-A binary that is killed the moment you start it (`Killed: 9`, exit code 137) has a missing or malformed code signature. Reinstall with the command above.
+A binary that is killed the moment you start it (`Killed: 9`, exit code `137`) is that case. Reinstall with the command above; [CLI troubleshooting](/cli/troubleshooting) has the full diagnosis and the `xattr` fix.
 </Note>
 
 ## Check it works

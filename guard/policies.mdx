@@ -3,19 +3,19 @@ title: "Organization policies"
 description: "The five policy modules — rate limiting, budgets, logging, guardrails and tool approval — what each rule holds, and why nothing reads them yet."
 ---
 
+Policies is where an owner or admin writes down the organization-wide rules for the traffic Receipt handles — the model calls it makes and the tool calls its agents run: how often a caller may spend a request, how much a team may spend in dollars, what is kept in the request log, and which agent tools should pause for a person. Every change is attributable — a rule is a receipt stream, so "who removed the budget cap, and when" stays answerable after the rule is gone.
+
 <Warning>
-**Policy rules are stored and audited, not applied.** Every rule you create on this page is written to a receipt stream, folded into a projection row, and rendered back in the table. No runtime path reads those rows: the model gateway does not consult your rate limits or budgets, the request log does not apply your redactions, and no approval gate exists anywhere in the product. Treat this page as a place to record intent, not as a control that fires.
+**Policy rules are stored and audited, not applied.** Every rule you create on this page is written to a receipt stream, folded into a projection row, and rendered back in the table. No runtime path reads those rows: the path that makes a model call does not consult your rate limits or budgets, the request log does not apply your redactions, and nothing pauses a tool call for a person to approve. Treat this page as a place to record intent, not as a control that fires.
 
 Two real controls are easy to confuse with it. A built-in per-user chat request limit and dollar-denominated pre-authorized budgets **are** enforced. They are fixed platform behaviour, they are not configured here, and they are summarised at the end of this page.
 </Warning>
-
-Policies is where an owner or admin writes down the organization-wide rules for gateway traffic: how often a caller may spend a request, how much a team may spend in dollars, what is kept in the request log, and which agent tools should pause for a person. Every change is attributable — a rule is a receipt stream, so "who removed the budget cap, and when" stays answerable after the rule is gone.
 
 ## Where policies live
 
 Policies is the **Policies** item in the organization settings sidebar, at `/organization/settings/policies`. The page header reads **"Policies"** — **"Configure organization-wide policies."**
 
-Like the rest of organization settings, it is owner and admin only. A member who opens the URL is redirected to `/` with no access-denied screen, and the server repeats the check on every read and write, answering anyone else with **"Only organization owners or admins can manage policies."**
+Like the rest of organization settings, it is owner and admin only. A member who opens the URL is redirected to `/` with no access-denied screen, and the server repeats the check on every read and write, answering anyone else with **"Only organization owners or admins can manage policies."** [Access control](/guard/access-control) has the full rule and its one exception.
 
 Five tabs run across the top: **Rate limiting** (the default), **Budget limiting**, **Logging config**, **Guardrails** and **Tool approval**. The active tab is a URL search parameter — `?tab=rate-limiting`, `budgets`, `logging`, `guardrails` or `tool-approval` — so a module can be linked directly and the back button moves between them.
 
@@ -68,7 +68,7 @@ Unlike the other modules, approvals are not first-match: every policy covering a
 </Frame>
 
 <Warning>
-**Tool approval is the sharpest example of stored-not-applied.** Its description reads: "Require a human decision before sensitive agent tools run. Every policy covering a tool applies to it, and the agent waits until an approver responds on the channel you choose." There is no per-action approval prompt in this release: no code path pauses a tool call, and no approver is notified on any channel.
+**Tool approval is the sharpest example of stored-not-applied.** Its description reads: "Require a human decision before sensitive agent tools run. Every policy covering a tool applies to it, and the agent waits until an approver responds on the channel you choose." There is no per-action approval prompt in this release: no code path pauses a tool call, and no approver is notified on any channel. The durable runtime does have a `human` step that an agent you write yourself can wait on — see [authoring agents](/core/authoring-agents) — but nothing in chat, background runs or the gateway calls it, and these rules are not what would drive it.
 
 What limits tool access today is per-connection permission. Write operations are off until an owner or admin enables them for a connection, and a call to an action that is not on the allowlist is refused — see [tools and permissions](/mcp-gateway/tools-and-permissions).
 </Warning>
@@ -108,7 +108,7 @@ flowchart LR
   Append --> Fold[Fold the chain into rule state]
   Fold --> Row[(Projection row)]
   Row --> Page[Policies page reads it back]
-  Row -. no consumer .-> Runtime[Model gateway, request log, tools]
+  Row -. no consumer .-> Runtime[Model calls, request log, tool calls]
 ```
 
 Three consequences are worth knowing:
@@ -137,7 +137,7 @@ Only the name length is checked today. The server function's input schema reject
 
 While this page waits for a consumer, three controls that do run cover some of the same ground.
 
-- **A built-in per-user chat request limit.** A fixed window counted in Postgres, 30 requests per 60 seconds by default, per user rather than per organization, adjustable with `PAID_CHAT_RATE_LIMIT_MAX_REQUESTS` and `PAID_CHAT_RATE_LIMIT_WINDOW_MS`. It is switched off entirely when `VITE_DISABLE_REDIS=true`, which the shipped example environment file sets — despite the limiter itself not using Redis.
+- **A built-in per-user chat request limit.** A fixed window counted in Postgres, 30 requests per 60 seconds by default, per user rather than per organization, adjustable with `PAID_CHAT_RATE_LIMIT_MAX_REQUESTS` and `PAID_CHAT_RATE_LIMIT_WINDOW_MS`. It is switched off entirely when `VITE_DISABLE_REDIS=true`, which the cloud example environment file sets and the self-hosted one does not — despite the limiter itself not using Redis.
 - **Dollar-denominated pre-authorized budgets.** Signup credit, per-seat cycle budgets and an admin-set organization cap are reserved before a turn and settled after it, and a request beyond them is refused rather than billed. Your own provider key bypasses the reservation, and there is no token budget anywhere in the product. See [usage and spend](/llm-gateway/usage-and-spend).
 - **Per-connection permissions.** Every gateway tool call is checked against the connection's action allowlist, and write actions additionally need the `connect:write` scope. See [tools and permissions](/mcp-gateway/tools-and-permissions).
 

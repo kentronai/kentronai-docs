@@ -29,7 +29,7 @@ Print the machine-readable envelope instead of the text report.
 </ParamField>
 
 <ParamField path="--target" type="prod | dev | local | http(s) URL" default="prod">
-Which environment to diagnose. `local` defaults to gateway `http://127.0.0.1:8787` and sign-in `http://127.0.0.1:3000`. Only the flag counts: a bare positional, as in `receipt doctor local`, is ignored and you get `prod`.
+Which environment to diagnose. `local` defaults to gateway `http://127.0.0.1:8787` and sign-in `http://127.0.0.1:3000`. A URL here behaves like `--server-url` and the report names the target `custom`. Only the flag counts: a bare positional, as in `receipt doctor local`, is ignored and you get `prod`.
 </ParamField>
 
 <ParamField path="--server-url" type="url">
@@ -126,7 +126,7 @@ When a session is present, `session` carries the details instead:
 }
 ```
 
-Each probe object is `{ url, status }` when the origin answered or `{ url, error }` when it could not be reached. If the endpoint cannot be resolved at all, the envelope is just `{ "ok": false, "error": "…", "nextSteps": ["…"] }`.
+`sessionFile` is printed as a full absolute path; `~/.receipt/session.json` stands in for it here and everywhere else in this documentation. Each probe object is `{ url, status }` when the origin answered or `{ url, error }` when it could not be reached. If the endpoint cannot be resolved at all, the envelope is just `{ "ok": false, "error": "…", "nextSteps": ["…"] }`.
 
 ## Exit codes
 

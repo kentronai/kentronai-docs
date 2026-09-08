@@ -135,7 +135,7 @@ Receipt queues a run on the same chat lane web chat uses, with a job id of the f
 | `⏳` | The 10-minute wait ran out while the run was still going. |
 | `⚠️` | The run failed, was blocked or cancelled, or could not be started. |
 
-A completed result carries no link back into Receipt. To see what the run did, open the [Tasks page](/co-worker/objectives-and-tasks), where it sits with the rest of your [background runs](/co-worker/background-runs), and use [Replay](/co-worker/replay). When the run produced no readable answer, the text is `Receipt objective <status>.` or `Receipt run <status>.`
+A completed result carries no link back into Receipt, and a Teams run does not appear on the [Tasks page](/co-worker/objectives-and-tasks), which lists only objectives started on that page. The one link Teams posts is on the `⏳` message described under [After ten minutes](#after-ten-minutes); it opens the run in the web app, where [Replay](/co-worker/replay) shows every step. When the run produced no readable answer, the text is `Receipt objective <status>.` or `Receipt run <status>.`
 
 The answer is posted as Markdown. A Markdown link to a PNG, JPEG or GIF image, a PDF, or a Word, Excel or PowerPoint file is also sent as an attachment on the same message; links to any other format stay plain Markdown links. Files attached to your own message are not read — Receipt sees only the text.
 
@@ -145,7 +145,7 @@ If the run is still going when the wait runs out, the result carries `⏳`: eith
 
 ## Following up in a conversation
 
-Every message is handled on its own. Receipt does record the conversation as a thread — in a channel, the reply chain under the root post; elsewhere, the whole conversation — and appends each later message to it. But earlier messages never reach the router or the run, and no run is bound to the conversation, so a follow-up about an earlier run starts a fresh one rather than reacting to it. Write follow-ups as complete requests, and use the web app to react to or cancel a run; see [Background runs](/co-worker/background-runs).
+Every message is handled on its own. Receipt does record the conversation as a thread — in a channel, the reply chain under the root post; elsewhere, the whole conversation — and appends each later message to it. But earlier messages never reach the router or the run, and no run is bound to the conversation, so a follow-up about an earlier run starts a fresh one rather than reacting to it. Write follow-ups as complete requests. Teams itself offers no way to react to or cancel a run once it is going; see [Background runs](/co-worker/background-runs).
 
 Teams can deliver the same message more than once. Receipt records each message id as it starts work and ignores a redelivery, unless the earlier attempt failed or has sat untouched for more than two minutes.
 
@@ -178,6 +178,6 @@ Set these on the Teams service; never commit the values.
 
 ## How a conversation is recorded
 
-Every Teams conversation gets its own hash-chained receipt stream, recording activation and each follow-up, the connected apps the router picked, the queueing and outcome of every run, and each reply sent. Tenant claims, user links and app removal are recorded the same way. The run itself is an ordinary background run on the chat lane, which is why it appears in Replay and on the Tasks page exactly like one started from web chat — see [Receipts and streams](/core/receipts-and-streams).
+Every Teams conversation gets its own hash-chained receipt stream, recording activation and each follow-up, the connected apps the router picked, the queueing and outcome of every run, and each reply sent. Tenant claims, user links and app removal are recorded the same way. The run itself is an ordinary background run on the chat lane, which is why Replay rebuilds it exactly like one started from web chat — see [Receipts and streams](/core/receipts-and-streams).
 
 Next step: [see how a turn is processed](/co-worker/how-it-works).

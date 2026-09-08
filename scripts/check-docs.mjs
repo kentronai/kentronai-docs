@@ -135,7 +135,11 @@ const FORBIDDEN = [
   [/\/Users\/(?!me\b)[A-Za-z0-9._-]+/, 'a personal home directory path'],
   [/\b[a-z0-9-]+\.[a-z0-9-]+\.ts\.net\b/, 'a private tailnet hostname'],
   [/AWS_PROFILE=beetle\b|--aws-profile beetle\b|\bbeetle-deploy\b|\bbeetle-production\b/, 'an internal AWS profile or deploy resource name'],
-  [/\bbeetle\.run\b/, 'the beetle.run domain'],
+  // Both spellings of the legacy marketing domain: the forward form, and the
+  // reverse-DNS form that macOS service identifiers use. The one exception is
+  // `run.beetle.clauden-observer`, the launchd label the CLI actually installs:
+  // a reader has to type it to find the file, so the docs must print it.
+  [/\bbeetle\.run\b|\brun\.beetle(?!\.clauden-observer\b)/, 'the legacy marketing domain'],
   [/\b(Satish|knsre)\b/, 'a named individual or IAM user'],
 ]
 for (const f of files) {
@@ -144,6 +148,43 @@ for (const f of files) {
     const global = new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g')
     for (const hit of text.matchAll(global)) {
       fail(`safety: ${f} contains ${label} ("${hit[0]}")`)
+    }
+  }
+}
+
+// --- publication safety: screenshots ---------------------------------------
+// Screenshots are captured from a live, signed-in session, which makes them the
+// highest-risk artefact on the site and the one the text rules above never see.
+// Every image must be listed here by a human who has looked at it, so that a
+// newly added capture fails the build until someone has done that.
+const REVIEWED_IMAGES_FILE = 'images/REVIEWED.txt'
+if (existsSync(join(ROOT, 'images'))) {
+  const imageFiles = []
+  const walkImages = (dir) => {
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry)
+      if (statSync(full).isDirectory()) walkImages(full)
+      else if (/\.(png|jpe?g|gif|webp|svg)$/i.test(entry)) imageFiles.push(relative(ROOT, full))
+    }
+  }
+  walkImages(join(ROOT, 'images'))
+
+  if (!existsSync(join(ROOT, REVIEWED_IMAGES_FILE))) {
+    fail(`safety: ${REVIEWED_IMAGES_FILE} is missing; every screenshot must be signed off in it`)
+  } else {
+    const reviewed = new Set(
+      readFileSync(join(ROOT, REVIEWED_IMAGES_FILE), 'utf8')
+        .split('\n')
+        .map((l) => l.replace(/#.*$/, '').trim())
+        .filter(Boolean),
+    )
+    for (const img of imageFiles) {
+      if (!reviewed.has(img)) {
+        fail(`safety: ${img} is not signed off in ${REVIEWED_IMAGES_FILE}; look at it, confirm it shows no real name, email, IP, account or instance id, then add it`)
+      }
+    }
+    for (const r of reviewed) {
+      if (!existsSync(join(ROOT, r))) fail(`safety: ${REVIEWED_IMAGES_FILE} lists ${r}, which does not exist`)
     }
   }
 }

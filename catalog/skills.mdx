@@ -8,7 +8,7 @@ A skill is a set of instructions your organization writes once — how to triage
 The Skills page is where they are managed: upload, enable, disable, view and delete, with a receipt behind every change. Picking a skill inside a conversation is covered in [using skills in chat](/co-worker/skills-in-chat); the file format itself is in [writing a skill](/catalog/writing-a-skill).
 
 <Frame caption="The Skills page for an organization with ten skills uploaded. Each row shows the skill's name, its /slug in monospace and the start of its description, then the status badge, the version, the bundle's file count and size, and when it last changed. The count line above the table reads Showing 10 of 10 matching skills (10 total).">
-  <img src="/images/catalog/skills.png" alt="The organization Skills page listing ten skills, each badged Enabled at version v1 with a one-file bundle." />
+  <img src="/images/catalog/skills.png" alt="The organization Skills page with the first nine of its ten skills in frame — competitor-analysis through delivery-blocker-triage — each badged Enabled at version v1 with a one-file bundle, under a count line reading Showing 10 of 10 matching skills (10 total)." />
 </Frame>
 
 ## Opening the Skills page
@@ -79,11 +79,17 @@ So deletion is forward-looking: new runs stop receiving the skill, every receipt
 
 ## Where an enabled skill goes in a run
 
-Enabled skills are snapshotted when the work packet for a task is written, which is what the page means by "Enabled skills are available to new runs" — enabling or disabling a skill reaches the packets written after the change, not a task already executing.
+Enabled skills are snapshotted when the work packet for a task is written — the packet being the instruction bundle Receipt hands to the disposable computer that will run the task. That is what the page means by "Enabled skills are available to new runs": enabling or disabling a skill reaches the packets written after the change, not a task already executing.
 
 At that moment every enabled skill is written into the task's workspace under **`receipt/skills/organization/<slug>/`**, with a catalog at **`receipt/skills/index.json`** listing each skill's name, description, version, content hash and the path to its `SKILL.md`. The registry that writes it enforces its own guards: **256 files per skill**, **4 MiB per file** and **8 MiB per skill**. The tree is then locked read-only — files and the index readable but not writable, directories not writable — and the agent is given no way to refresh it. Nothing a worker changes there can come back as a patch: those paths are excluded from patch collection and rejected outright if they appear anyway.
 
-Organization skills stay in this workspace catalog and are never copied into the agent's home directory. The packet's summary tells the agent only that every enabled skill is mounted and cataloged at `receipt/skills/index.json`, and that it chooses which entries to load. One of the skills that ships with Receipt states the rule for reading that catalog:
+Organization skills stay in this workspace catalog and are never copied into the agent's home directory. The packet's summary tells the agent — Codex, the coding agent Receipt runs inside the sandbox — only where the catalog is, and that the choice of what to open is its own:
+
+> All enabled organization skills are mounted for this run and cataloged at `receipt/skills/index.json`; Codex chooses which catalog entries to load.
+
+Mounting follows the run's authorization. A run started from chat, Slack or Teams carries your organization; an objective started with no organization context — from the in-repo developer CLI, for example — receives no organization skills at all.
+
+One of the skills that ships with Receipt spells out the reading discipline it asks for. Nothing in the run's prompt points the agent at that skill — it is copied into the agent's home alongside the others — so treat this as the intended practice, not as an instruction every run is guaranteed to receive:
 
 > 1. Read `receipt/skills/index.json`. It is the complete compact catalog for the run, including each skill's name, description, version, content hash, and guest-workspace-relative `skillPath`.
 > 2. Select the smallest relevant set using the task, plan, and catalog metadata. Do not read every `SKILL.md` merely because it is mounted.

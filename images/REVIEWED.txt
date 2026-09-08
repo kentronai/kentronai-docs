@@ -1,0 +1,64 @@
+# Screenshots signed off for publication.
+#
+# Every file under images/ must be listed here. Adding a line means a person has
+# opened the image and confirmed it shows no real name, email address, IP
+# address, cloud account or instance identifier, internal hostname or resource
+# name, and no API key or token. The text safety rules in check-docs.mjs cannot
+# see inside a PNG; this list is the check that replaces them.
+#
+# Reviewed 2026-09-08 against the demo tenant: organization Contoso, user Alex
+# (alex@example.com), members on example.com, agents ops-assistant-host and
+# support-triage-agent, AWS example instance id.
+
+images/catalog/agent-registry-autonomy-filter.png
+images/catalog/agent-registry-cloud-integrations.png
+images/catalog/agent-registry-dashboard.png
+images/catalog/agent-registry-detail.png
+images/catalog/agent-registry-inventory.png
+images/catalog/knowledge.png
+images/catalog/org-brain.png
+images/catalog/skills-row-actions.png
+images/catalog/skills.png
+images/co-worker/chat-home.png
+images/co-worker/command-palette.png
+images/co-worker/composer-plus-menu.png
+images/co-worker/composer-skills-menu.png
+images/co-worker/computers.png
+images/co-worker/replay-summary.png
+images/co-worker/replay-transcript.png
+images/co-worker/replay-work.png
+images/co-worker/run-needs-attention.png
+images/co-worker/sessions.png
+images/co-worker/tasks.png
+images/core/account-security.png
+images/core/account.png
+images/core/billing.png
+images/core/forgot-password.png
+images/core/members.png
+images/core/org-general.png
+images/core/org-switcher.png
+images/core/sign-in.png
+images/core/sign-up.png
+images/guard/guardrail-group-dialog.png
+images/guard/guardrails-picker.png
+images/guard/guardrails.png
+images/guard/org-security.png
+images/guard/policies-budget.png
+images/guard/policies-rate-limiting.png
+images/guard/policies-tool-approval.png
+images/llm-gateway/byok.png
+images/llm-gateway/custom-endpoints.png
+images/llm-gateway/models.png
+images/llm-gateway/provider-models.png
+images/llm-gateway/provider-policy.png
+images/llm-gateway/usage.png
+images/llm-gateway/workspace-llm-keys.png
+images/mcp-gateway/gateway-activity.png
+images/mcp-gateway/global-integrations.png
+images/mcp-gateway/manage-tools-github.png
+images/mcp-gateway/manage-tools-gmail.png
+images/mcp-gateway/new-workspace.png
+images/mcp-gateway/workspace-activity.png
+images/mcp-gateway/workspace-overview.png
+images/mcp-gateway/workspace-settings.png
+images/mcp-gateway/workspaces.png

@@ -45,7 +45,7 @@ A Slack workspace belongs to exactly one Receipt organization at a time — the 
 
 Receipt's Slack app requests exactly six scopes: `app_mentions:read`, `channels:history`, `chat:write`, `reactions:write`, `users:read`, and `users:read.email`. The authorization link asks for bot scopes only — it sends no `user_scope`, so Receipt never holds a token that acts as you. There is no `commands` scope and no direct-message scope.
 
-Consistent with that scope list, none of the following are implemented: slash commands, interactive buttons or modals, direct messages, an App Home tab, file uploads, or message shortcuts. There is no approval prompt in the thread either — nothing in Slack asks you to confirm an action before a run takes it. The entire surface is: get mentioned in a channel, and reply in that channel's thread.
+Consistent with that scope list, none of the following are implemented: slash commands, interactive buttons or modals, direct messages, an App Home tab, file uploads, or message shortcuts. There is no approval prompt in the thread either ([tools and permissions](/mcp-gateway/tools-and-permissions)). The entire surface is: get mentioned in a channel, and reply in that channel's thread.
 
 ## Getting a response
 
@@ -88,7 +88,7 @@ On a deployment you run yourself, `SLACK_PROGRESS_UPDATE_INTERVAL_MS` and `SLACK
 
 The final message carries a status label — `Completed in <duration>`, `Failed after <duration>`, `Canceled after <duration>` or `Blocked after <duration>`, where the duration reads like `6s` or `1m 05s` — then the answer with its markdown converted to Slack formatting (tables become bulleted records, and text longer than about 2,800 characters is cut off and ends with `...(truncated)`), then a **View Receipt** link back into the app. When the run produced a link of its own — a pull request it opened, a record it created — that link is appended under a `Links:` line, so you don't depend on the answer text repeating it. Nothing Receipt adds around the answer spells out an internal run, job or objective id; follow the link if you need one.
 
-The link opens the run in the web app, where [Replay](/co-worker/replay) shows every step; it also appears on the Tasks page with the rest of your [background runs](/co-worker/background-runs).
+The link opens the run in the web app, where [Replay](/co-worker/replay) shows every step. It is also the way back into a Slack run: the Tasks page lists only objectives started on that page, so one started from Slack is not there. See [background runs](/co-worker/background-runs).
 
 ### After ten minutes
 
@@ -139,6 +139,6 @@ Receipt resolves your Slack identity against your Receipt account before it runs
 
 Every Slack thread Receipt joins gets its own hash-chained receipt stream. The thread's events are appended there as they happen: `slack.thread.activated` when the first mention arrives, `slack.thread.follow_up_received` for later messages, `slack.thread.providers_selected` when the router picks the connected apps to use, `slack.thread.direct_turn_resolved` for a direct answer, the `slack.thread.objective_delivery_*` events around a run's result, the `slack.thread.funding_*` events for billing, and `slack.thread.routing_failed` when routing was refused.
 
-That stream is what makes the follow-up behaviour and the restart recovery above possible: context is replayed from receipts rather than kept in memory, and only a successful delivery clears a pending one. The run itself is an ordinary background run on the chat lane, which is why it appears in Replay and on the Tasks page exactly like a run started from web chat. See [Receipts and streams](/core/receipts-and-streams) for the model behind it.
+That stream is what makes the follow-up behaviour and the restart recovery above possible: context is replayed from receipts rather than kept in memory, and only a successful delivery clears a pending one. The run itself is an ordinary background run on the chat lane, which is why Replay rebuilds it exactly like a run started from web chat. See [Receipts and streams](/core/receipts-and-streams) for the model behind it.
 
 Next step: [see how Receipt behaves in Microsoft Teams](/co-worker/teams).

@@ -5,14 +5,14 @@ description: "The organization-wide activity dashboard — runs, spend and which
 
 Org Brain answers "how is this organization actually using Receipt?" It reports run volume, reliability, duration and spend over a 30-, 60- or 90-day window, shows which applications your objectives reached for and whether the accounts behind them are still valid, and lists the most recent objectives so you can open one and read what was asked.
 
-It is read-only. Nothing here is edited, approved or configured. Every figure is aggregated at the moment you load the page: the run and objective numbers from receipt projections, the connection numbers from your saved connections.
+It is read-only. Nothing here is edited, approved or configured. Every figure is aggregated at the moment you load the page: the run and objective numbers from receipt projections — the tables Receipt rebuilds by replaying its receipt streams — and the connection numbers from your saved connections.
 
 ## Where it lives and who can open it
 
 Org Brain is the **Org Brain** item in the organization settings rail, at `/organization/settings/knowledge-graph`. Like the rest of organization settings, the route is owner and admin only; a member who types the URL is bounced out of settings and lands back in the app at `/chat`.
 
 <Note>
-The server-side aggregation is deliberately readable by any organization member — its own comment says the page answers "how is our organization actually using this", and that it exposes "never per-user attribution, raw receipts, or run contents". The route guard is stricter than that intent, so in this release only owners and admins get there.
+The aggregation behind the page is deliberately readable by any organization member: it is built to answer "how is this organization using Receipt?" and returns no per-user attribution, no raw receipts and no run contents. The route guard is stricter than that, so in this release only owners and admins reach the page.
 </Note>
 
 The header carries a **Reporting period** group of **Last 30 days**, **Last 60 days** and **Last 90 days**, and a freshness line reading `Updated {time} · refreshes automatically`. The refresh is a 30-second poll, not a live push; the previous window's numbers stay on screen while the next poll resolves, so the page never blanks. Before any data arrives you see **"Loading organization activity…"**, and with nothing recorded, **"No activity to show yet."**
@@ -23,7 +23,7 @@ The header carries a **Reporting period** group of **Last 30 days**, **Last 60 d
 
 ## What the tiles count
 
-The first card is **"Usage metrics across the organization"**, described as `Agent run volume, reliability, and cost over the last {n} days.` Its six tiles are counted from job records, not from objectives:
+The first card is **"Usage metrics across the organization"**, described as `Agent run volume, reliability, and cost over the last {n} days.` An objective is the goal you handed Receipt; a job is one queued unit of work behind it, so a single objective usually produces several jobs ([objectives and tasks](/co-worker/objectives-and-tasks) defines the whole vocabulary). These six tiles are counted from job records, not from objectives:
 
 | Tile | Hint under it | What it is |
 |---|---|---|

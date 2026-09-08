@@ -15,7 +15,7 @@ You talk to Receipt in the web app, in Slack, or in Microsoft Teams. Every messa
 
 Background work runs in Factory: the objective is planned into tasks, each task runs in a disposable sandboxed computer, and the outcome comes back to the thread with a **Replay** you can open. In the web app and in Slack, if the router cannot tell what access a request needs it stops rather than guessing: `Receipt couldn't determine the access needed for this request. Please retry; no task was started.`
 
-<Frame caption="The chat home page as an owner or admin sees it: a greeting, the composer with its + menu, Skills chip and a rotating example prompt, a Replay button top right, and the Docs link and Beetle runners count in the sidebar footer. Members see a shorter sidebar.">
+<Frame caption="The chat home page as an owner or admin sees it: a greeting, the composer with its + menu, Skills chip and a rotating example prompt, a Replay button top right, and the Docs link and Beetle runners count in the sidebar footer. The recent-chat list under Chat is a scroll area, so its last row is clipped at the bottom edge. Members see a shorter sidebar.">
   <img src="/images/co-worker/chat-home.png" alt="Receipt's chat home page: the sidebar expanded to show recent chats and the product areas, a greeting in the centre, and an empty composer with the + menu and the Skills chip." />
 </Frame>
 
@@ -25,13 +25,13 @@ In the interface the assistant is called **Beetle**: chat status lines read `Sen
 
 Two gateways sit between an agent and everything outside Receipt.
 
-The **MCP Gateway** holds your app connections. You connect an app once through Receipt Connect, an owner or admin decides per connection which operations agents may call, and Codex or any other MCP client uses those operations without ever holding a provider credential. Write operations are off until an owner or admin enables them; there is no per-action approval prompt in this release. Provider credentials stay in Nango, so MCP client configs and sandboxes never contain them.
+The **MCP Gateway** holds your app connections. You connect an app once through Receipt Connect, an owner or admin decides per connection which operations agents may call, and Codex or any other MCP client uses those operations without ever holding a provider credential. Write operations are off until an owner or admin enables them; there is no per-action approval prompt in this release ([tools and permissions](/mcp-gateway/tools-and-permissions)). Provider credentials stay in Nango, so MCP client configs and sandboxes never contain them.
 
 The **LLM Gateway** is the checkpoint every model call Receipt itself makes passes through: which providers and models the organization allows, whose key pays for the call, and how much spend is pre-authorized. It is not a proxy; there is no external endpoint for other applications to send model traffic through.
 
 ## Receipts as proof
 
-Receipt records its work in receipt streams: tamper-evident, SHA-256 hash-chained records in Postgres. Every background run and every action called through the gateway's `/connect/call` route writes receipts; the pages that show tasks, runs and sessions are built from those streams; the runtime verifies the hash chain whenever it replays a stream and refuses one that does not check out. Calls made through the MCP bridge are not yet recorded.
+Receipt records its work in receipt streams: tamper-evident, SHA-256 hash-chained records in Postgres. Every background run and every action called through the gateway's `/connect/call` route writes receipts; the pages that show tasks, runs and sessions are built from those streams; the runtime verifies the hash chain whenever it replays a stream and refuses one that does not check out. Calls made through the MCP bridge are not yet recorded ([aggregate server](/mcp-gateway/aggregate-server)).
 
 ## The seven components
 

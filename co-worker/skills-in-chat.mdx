@@ -5,7 +5,7 @@ description: "Pick an organization skill from the composer, or ask Receipt to dr
 
 Organization skills are reusable instructions, one `SKILL.md` file each, that your organization publishes for agents to follow during background runs. From the chat composer you can do two things with them: pick one so the run you are about to start knows which instructions you mean, and ask Receipt to draft a brand-new skill and save it, without opening the Skills page. Uploading, versioning, enabling and deleting skills is covered in [Skills](/catalog/skills); the file format is in [Writing a skill](/catalog/writing-a-skill).
 
-<Frame caption="The Skills chip open on a new chat. Under Use a skill, six enabled skills are listed by name with their /slug beneath. The panel scrolls, so the remaining entries and the Create skill and Manage skills items sit below the visible rows. The chip is on the composer toolbar, beside the + button.">
+<Frame caption="The Skills chip open on a new chat. Under Use a skill, six enabled skills are listed by name with their /slug beneath, which is the most this menu shows. The panel scrolls, so the Create skill and Manage skills items sit below the visible rows. The chip is on the composer toolbar, beside the + button.">
 <img src="/images/co-worker/composer-skills-menu.png" alt="A new chat with the Skills menu open above the composer, listing six organization skills by name and slug under the heading Use a skill." />
 </Frame>
 
@@ -98,7 +98,7 @@ The generator is held to the same rules as an upload, plus two of its own: the f
 - **Author from Slack or Teams.** Drafting and saving are web-only. A Slack or Teams message that asks for a new skill is routed to a background run instead; see [Slack](/co-worker/slack) and [Teams](/co-worker/teams).
 
 <Info>
-If the router's decision cannot be used, Receipt asks it once more and then stops the turn with `Receipt couldn't determine the access needed for this request. Please retry; no task was started.`, shown inside a `Beetle stopped before completing this response.` banner. Beetle is the assistant's name in the interface. Nothing is saved and no run starts; send the message again. Other failure text is listed in [Errors and limits](/co-worker/errors-and-limits).
+If the router's decision cannot be used, Receipt asks it once more and then stops the turn with `Receipt couldn't determine the access needed for this request. Please retry; no task was started.`, shown inside a `Beetle stopped before completing this response.` banner ([Beetle](/introduction) is the interface's name for the assistant). Nothing is saved and no run starts; send the message again. Other failure text is listed in [Errors and limits](/co-worker/errors-and-limits).
 </Info>
 
 ## Create skill and Manage skills shortcuts

@@ -22,7 +22,7 @@ These roles are organization-wide; a Receipt workspace keeps its own membership 
 Whoever creates an organization becomes its owner.
 
 <Note>
-Owner and admin are not distinguished by Receipt's own admin check: every place Receipt asks "is this person an admin?" — guardrails, organization skills, policies, organization knowledge, the Slack and Teams installs, Stripe checkout and workspace mutations — accepts both identically. The difference between the two is deleting the organization, which only an owner can do.
+Owner and admin are not distinguished by Receipt's own admin check: every place Receipt asks "is this person an admin?" — guardrails, organization skills, policies, organization knowledge, the Slack and Teams installs, Stripe checkout and workspace mutations — accepts both identically. The difference between the two is deleting the organization, which only an owner can do — and no screen in the app offers it.
 </Note>
 
 Only **Admin** and **Member** are selectable in the interface. Owner cannot be assigned through **Change role**, and the last owner is protected from both a role change and removal. For inviting people, seats and the Members table, see [members and roles](/core/members-and-roles).
@@ -60,7 +60,7 @@ Three areas are separate navigation areas rather than settings entries, so they 
 
 - **MCP Gateway** — genuinely open to members, per the exception above. Its rail icon points straight at the Workspaces page, which is how a member reaches Workspaces in practice: the Workspaces entry itself lives in that hidden organization menu.
 - **Model Gateway** — the icon is visible, but it points at the organization Models page under `/organization/settings`, so a member who follows it is redirected to the app root.
-- **Agents** — the Agent Registry is open to any signed-in, non-anonymous account. Reading the inventory and the risk dashboard needs no admin role; scanning a connected cloud account does, and refuses with `Only organization owners or admins can scan cloud agents.`
+- **Agents** — the [Agent Registry](/catalog/agent-registry) is open to any signed-in, non-anonymous account. Reading the inventory and the risk dashboard needs no admin role; scanning a connected cloud account does, and refuses with `Only organization owners or admins can scan cloud agents.`
 
 <Note>
 Guardrail configuration is not replicated to a member's browser at all. The membership check lives inside the sync query rather than in a filter applied afterwards, because the configuration itself reveals what an organization treats as sensitive — the patterns protecting internal identifiers, the terms it blocks. See [guardrails](/guard/guardrails).
@@ -82,7 +82,7 @@ Connection lifecycle and connection-policy changes need more than the `connect:w
 </Step>
 </Steps>
 
-That is what stops a token with broad scopes from being enough to disconnect an integration or widen an allowlist. The scopes and allowlists themselves are covered in [connection scopes](/mcp-gateway/connection-scopes) and [tools and permissions](/mcp-gateway/tools-and-permissions).
+That is what stops a token with broad scopes from being enough to remove a connection or widen an allowlist. The scopes and allowlists themselves are covered in [connection scopes](/mcp-gateway/connection-scopes) and [tools and permissions](/mcp-gateway/tools-and-permissions).
 
 ## Plan gating is always allowed
 
@@ -90,7 +90,7 @@ The plan catalog declares minimum plans for several organization features — BY
 
 The upgrade copy still exists in the interface — `This feature requires a {planName} subscription.`, `Upgrade to {planName}` and `Contact us` — so you may see it without any refusal behind it. Note also that three of those advertised features (verified domains, single sign-on, directory provisioning) have no implementation at all, so they would gate nothing even if the helper were switched on.
 
-Your plan is not inert everywhere. It still sets seat capacity, which **is** enforced when you invite someone (see [members and roles](/core/members-and-roles)). The built-in per-user chat rate limit is not one of those places: the free-tier check returns `false` for every caller, so the free-tier branch never runs and every account is throttled at the paid-tier limit (see [policies](/guard/policies)).
+Your plan is not inert everywhere. It still sets three things: the seat count, which **is** enforced when you invite someone (see [members and roles](/core/members-and-roles)); the metered usage budget; and the one-time signup credit. [Billing and plans](/core/billing-and-plans) covers all three. The built-in per-user chat rate limit is not one of them: the free-tier check returns `false` for every caller, so the free-tier branch never runs and every account is throttled at the paid-tier limit (see [policies](/guard/policies)).
 
 ## The Security page
 
@@ -110,4 +110,4 @@ The three cards read:
 
 Each card's footer reads `This feature will be available soon for self serve.` Every button is disabled and every link target is a placeholder. Treat the page as a statement of intent: today, sign-in is email and password, there is no single sign-on or directory sync, and membership is managed one invitation at a time.
 
-Next step: [see what Receipt records and how the record resists tampering](/guard/receipts-and-audit)
+Next step: [see what Receipt records and how the record resists tampering](/guard/receipts-and-audit).

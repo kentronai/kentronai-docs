@@ -3,16 +3,16 @@ title: "Billing and plans"
 description: "Choose a plan, allocate seats, and see the three things a plan actually changes — feature gating is not one of them."
 ---
 
+Billing is where an owner or admin picks a plan, sets how many seats it covers, and opens the payment portal. It is one page, and it is short: a summary card with the seat bar, a row of plan cards, and a cancellation section that appears only when you are paying for something. What a plan changes is narrower than the cards suggest, so read the next paragraph before you compare them.
+
 <Warning>
 **No feature is locked behind a plan in this release.** Every feature-access check returns allowed, whatever plan you are on, and every model in the catalog stays allowed. File uploads, bring-your-own-key, organization policies and paid models are all reachable on Free.
 
 The plan-restriction copy still ships — `This feature requires a {planName} subscription.` and `Upgrade to {planName}` are still in the message catalogue, still wired to the upgrade call to action — but it is drawn only on the refused branch, and the check never takes that branch, so none of it reaches the screen. Do not plan around a paywall that is not there, and do not assume a plan is the cause when you are troubleshooting.
 </Warning>
 
-Billing is where an owner or admin picks a plan, sets how many seats it covers, and opens the payment portal. It is one page, and it is short: a summary card with the seat bar, a row of plan cards, and a cancellation section that appears only when you are paying for something.
-
-<Frame caption="The Billing page on a Free organization. The summary card reads Free plan, No billing period on the Free plan, and a Seat allocation bar at 1 of 5 seats; under it the Stripe portal row, then the four self-serve plan cards under Change plan, each with its own monthly price and inclusions. Free carries the Current badge and Pro carries Most Popular. Notice the left rail: it has no Usage or Billing icon.">
-  <img src="/images/core/billing.png" alt="The Billing page showing a Free plan summary card, a seat allocation bar at 1 of 5 seats, a Manage billing details button, and the Free, Plus, Pro and Scale plan cards below a Change plan heading." />
+<Frame caption="The Billing page on a Free organization. The summary card reads Free plan over No billing period on the Free plan, with a Seat allocation bar at 1 of 5 seats and the Stripe portal row under it. Under Change plan sit the four self-serve cards, each with its own monthly price and its full inclusion list, Free badged Current and Pro badged Most Popular, and the Enterprise band below them priced Custom with its own list and a Contact Sales button. Notice the left rail: it has no Usage or Billing icon.">
+  <img src="/images/core/billing.png" alt="The Billing page showing a Free plan summary card, a seat allocation bar reading 1 of 5 seats, a Manage billing details button, the Free, Plus, Pro and Scale cards under a Change plan heading with their monthly prices and feature lists, and an Enterprise band priced Custom beneath them." />
 </Frame>
 
 ## Where Billing lives
@@ -55,7 +55,7 @@ You do not pick a seat count on the page itself. It is chosen inside the plan-ch
 
 > You selected `{selectedSeats}` seats for `{activeMembers}` active members. Everyone keeps access until period end, and extra members will be auto-restricted after renewal.
 
-Seats are the one plan number that is genuinely enforced, and the place it bites is invitations. See [Members and roles](/core/members-and-roles) for the invite flow and the refusal it produces.
+Seat count is the first of the three things a plan still changes, and the place it bites is invitations. See [Members and roles](/core/members-and-roles) for the invite flow and the refusal it produces.
 
 ## Changing a plan
 
@@ -123,6 +123,6 @@ That message names a page that does not exist under that name — the page is **
 
 What the credit and the budget are spent on, and where the spend is reported, is the [Usage and spend](/llm-gateway/usage-and-spend) page.
 
-Two other things constrain you regardless of plan: your **role**, everywhere, and the chat rate limit of 30 requests per 60-second window, which needs Redis to be enforced at all. Both, and every plan-gated string that cannot fire, are catalogued in [Errors and limits](/co-worker/errors-and-limits).
+Two other things constrain you regardless of plan: your **role**, everywhere, and the chat rate limit of 30 requests per 60-second window, which is counted in Postgres but switched off entirely when `VITE_DISABLE_REDIS=true`. Both, and every plan-gated string that cannot fire, are catalogued in [Errors and limits](/co-worker/errors-and-limits).
 
-Next step: [see how the platform is put together](/core/architecture)
+Next step: [see how the platform is put together](/core/architecture).

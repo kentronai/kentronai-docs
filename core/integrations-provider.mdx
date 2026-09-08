@@ -40,7 +40,7 @@ Provider-native names are **deliberately not accepted**: `NANGO_SECRET_KEY`, `NA
 </Warning>
 
 <Warning>
-**`RECEIPT_CONNECTION_ENCRYPTION_KEY_B64` cannot be rotated.** Stored connection bundles are stamped with a key version and the reader hard-fails on any other version; there is no re-encryption routine. Change the key and every stored connection reference becomes permanently undecryptable, with re-entry as the only recovery. The same is true of `BYOK_ENCRYPTION_KEY_B64`. Both are covered in [Configuration, secrets, and keys](/core/configuration).
+**`RECEIPT_CONNECTION_ENCRYPTION_KEY_B64` cannot be rotated** — change it after connections exist and every stored reference becomes permanently undecryptable, with re-entry as the only recovery. The same is true of `BYOK_ENCRYPTION_KEY_B64`; [Configuration, secrets, and keys](/core/configuration#encryption-keys-and-shared-secrets) explains why neither has a way back.
 </Warning>
 
 ## The key you cannot have yet

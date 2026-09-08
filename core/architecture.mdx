@@ -7,6 +7,8 @@ When you run Receipt yourself, you deploy one runtime image several times over a
 
 Receipt runs one runtime image. Which of five roles a given process takes is decided entirely by the `RECEIPT_PROCESS_ROLE` environment variable — the same build, started five different ways.
 
+Four of those five roles are workers, and they get their work from **Resonate**: a separate durable-promise broker that Receipt runs alongside the runtime. A process registers a named function with Resonate and then waits; when the runtime wants that function run, it asks Resonate to invoke it, and Resonate keeps the call alive across a restart on either side. The queue itself is still the [receipt chain](/core/receipts-and-streams) — Resonate only delivers the work. [Jobs and durable execution](/core/jobs-and-durable-execution) follows one job through it end to end.
+
 ## The five roles
 
 | Role | Binds an HTTP port | Runs heartbeats | Resonate function it registers | Default concurrency |
@@ -29,14 +31,14 @@ Each role polls its own Resonate task group: `receipt-api`, `receipt-driver`, `r
 
 ## The service gateway
 
-A single gateway sits in front of every service and routes by route prefix. Its table comes from a declarative service graph, not from per-deployment configuration:
+A single gateway sits in front of every service and routes by route prefix, so a browser, a CLI or an MCP client only ever needs one origin. Its table comes from a declarative service graph, not from per-deployment configuration:
 
 | Prefix | Service | Default internal port | Exposure | Health check | Strips the prefix |
 | --- | --- | --- | --- | --- | --- |
 | `/` | Web app | 3001 | Public | `/health` | No |
 | `/runtime` | Runtime | 8787 | Private | `/healthz` | Yes |
 | `/connect` | Runtime | 8787 | Public | `/readyz` | **No** |
-| `/zero` | zero-cache | 4848 | Public | `/` | Yes |
+| `/zero` | `zero-cache`, the browser sync service | 4848 | Public | `/` | Yes |
 | `/integrations` | Integrations provider | 3003 | Public | `/health` | Yes |
 | `/integrations-connect` | Integrations connect UI | 3009 | Public | `/` | Yes |
 | `/slack` | Slack adapter | 3010 | Public | `/health` | Yes |

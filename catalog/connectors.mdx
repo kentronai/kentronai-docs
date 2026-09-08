@@ -1,9 +1,9 @@
 ---
-title: "The connector catalog"
+title: "Connector catalog"
 description: "Every app Receipt can connect to, what each connection publishes as tools, and how to find them on the Integrations page."
 ---
 
-Connecting an app is how Receipt gets context beyond the chat window. An owner or admin connects Gmail, GitHub, AWS or Jira once, and from then on chat, background runs, the CLI and any MCP client can read from it — within the operations that connection is allowed to call. The connector catalog is the checked-in list that decides which apps you can connect at all, and what each one publishes.
+Connecting an app is how Receipt gets context beyond the chat window. An owner or admin connects Gmail, GitHub, AWS or Jira once, and from then on chat, background runs, the CLI and any MCP client — any tool that speaks the Model Context Protocol, such as Codex — can read from it, within the operations that connection is allowed to call. The connector catalog is the checked-in list that decides which apps you can connect at all, and what each one publishes.
 
 <Warning>
 **Only the 63 connectors listed on this page are connectable out of the box.** They sit inside a browsable directory of about 900 cards; the rest are display-only, almost all of them from a pinned snapshot of the integration provider's public directory. Those cards are not connectable: they show **Coming soon** and carry no button. Receipt's runtime connector list, not the directory, decides whether a card can be connected.
@@ -11,11 +11,9 @@ Connecting an app is how Receipt gets context beyond the chat window. An owner o
 
 ## Browsing the catalog
 
-The organization-wide surface is **Integrations** in the organization settings rail, titled **Global Integrations**:
+The organization-wide surface is **Integrations** in the organization settings rail, titled **Global Integrations**. An app connected there is connected once for the whole organization and available to Receipt chat.
 
-> Connected once for the whole organization and available to Receipt chat. Workspace-scoped connections for CLI and MCP clients live under MCP Gateway.
-
-Like the rest of organization settings, it is owner and admin only. The same page appears embedded as the **Open integrations** tab of an MCP Gateway workspace, where it is not restricted to owners and admins — any member of that workspace can use it — and connects into that workspace instead. Which scope you want is covered in [connection scopes](/mcp-gateway/connection-scopes); the connect flow itself is in [connect an app](/mcp-gateway/connect-an-app).
+Like the rest of organization settings, it is owner and admin only. The same page appears embedded as the **Open integrations** tab of an MCP Gateway workspace, where it is not restricted to owners and admins — any member of that workspace can use it — and connects into that workspace instead. Which scope you want is covered in [connection scopes](/mcp-gateway/connection-scopes); the connect flow itself, and the page's own description quoted in full, is in [connect an app](/mcp-gateway/connect-an-app).
 
 <Frame caption="Global Integrations at the organization scope. Connected apps sit first and offer Manage tools and Disconnect; connectable ones offer Connect. Notice the two filter rows — category chips above, All / Connected / Available / Popular below.">
   <img src="/images/mcp-gateway/global-integrations.png" alt="The Global Integrations page in Receipt, showing a search field, category chips, segmented tabs and a grid of integration cards, some connected with Manage tools and Disconnect actions and some offering Connect." />
@@ -30,14 +28,14 @@ Three controls narrow the grid, and one extends it:
 | Segmented tabs | **All / Connected / Available / Popular**. **Connected** keeps entries that have a connection; **Available** keeps only connectable ones |
 | **Load more** | The grid renders 60 entries at a time and shows `{n} remaining` beside the button |
 
-The six category chips replace the catalog's own fine-grained categories — 23 of them in Receipt's curated list — which the code calls "far too many chips to scan".
+The six category chips replace the catalog's own fine-grained categories — 23 of them in Receipt's curated list — which would be too many chips to scan.
 
 When nothing matches, the grid shows **No integrations found** — "Try a different search or turn off the connected-only filter." That sentence outlived its control: the connected-only switch and the authentication-method select are both in the page's hidden markup and are not rendered. Use the **Connected** tab instead.
 
 A card carries **Connect** when it is connectable, **Manage tools** and **Disconnect** once a connection exists, and **Coming soon** when it is neither. One healthy connection gets no extra label — the card already says it is connected — while several show a `{n} connections` count. When none of a card's connections is valid, it says so outright: **1 saved connection needs attention**, or `{n} saved connections need attention`.
 
 <Note>
-Cloud accounts connected for the [Agent Registry](/catalog/agent-registry) use a dedicated connection named `agent-registry` and are deliberately filtered out of this page, so a scan credential never reads as — or gets reused as — your organization's primary connection to that cloud. Connecting AWS, Azure or Google Cloud here is a separate act: it publishes that connector's own tools to chat and MCP clients, which a registry scan credential never does.
+Cloud accounts connected for the Agent Registry use a dedicated `agent-registry` connection and are deliberately hidden from this page, so connecting AWS, Azure or Google Cloud here is a separate act with a separate credential — see [Agent Registry](/catalog/agent-registry).
 </Note>
 
 ## Asking for a connector that does not exist
@@ -67,15 +65,7 @@ Write operations are off until an owner or admin enables them for that connectio
 
 **Authorization mode** — *Provider-only* means the provider's Connect interface collects the credential directly (an API key, a personal access token, an access key pair, a service principal), and Receipt creates the integration record for you if it is missing. *OAuth 2.0*, *OAuth* and *Custom* require an operator to have configured that integration in your deployment first.
 
-**Tool surface** decides what a connection publishes. The five surfaces are explained in full on [Receipt Connect](/mcp-gateway/receipt-connect); in short:
-
-| Surface | What the connection publishes |
-| --- | --- |
-| `typed-proxy` | Reviewed, checked-in tools with fixed methods, closed schemas and an explicit read or write class |
-| `compatibility-read` | One Receipt-owned tool, `read-provider-resource` — provider-relative `GET` only |
-| `resource-aware-get` | One read tool, for Atlassian connectors, where Receipt resolves the site and rewrites the path |
-| `provider-mcp` | Tools discovered from the provider's own MCP server, deliberately excluded from the aggregate gateway |
-| `command-auth` | No Receipt tools at all — the connection becomes real CLI configuration inside a worker |
+**Tool surface** decides what a connection publishes: `typed-proxy` and `resource-aware-get` publish checked-in read tools, `compatibility-read` publishes the one bounded read tool `read-provider-resource`, `provider-mcp` publishes tools discovered from the provider's own MCP server, and `command-auth` publishes no Receipt tools at all — the connection becomes real CLI configuration inside a worker. [Receipt Connect](/mcp-gateway/receipt-connect) explains all five in full, with the per-surface connector counts that make the 63 add up and the reason `gcp` reports as `typed-proxy`. The **Tool surface** column below gives each connector's own answer.
 
 ## Every connector
 
@@ -144,10 +134,6 @@ Write operations are off until an owner or admin enables them for that connectio
 | `zoho-recruit` | Zoho Recruit | zoho-recruit | OAuth 2.0 | compatibility-read — 1 read |
 | `zoom` | Zoom | zoom | OAuth 2.0 | compatibility-read — 1 read |
 | `zoominfo` | ZoomInfo | zoominfo | OAuth 2.0 | compatibility-read — 1 read |
-
-<Note>
-`gcp` sits in two places at once. Its manifest declares both a command-backed credential mode and proxy tools, and the classifier checks proxy tools first — so `gcp` reports as `typed-proxy` while still producing an isolated `gcloud` configuration inside a worker.
-</Note>
 
 Your deployment's list can grow in one direction. An integration configured in your deployment's integration provider but absent from Receipt's catalog is appended as an extra row with the `compatibility-read` surface, so it gets the one bounded read tool and nothing more. Every other card on the page is display-only and stays **Coming soon**.
 

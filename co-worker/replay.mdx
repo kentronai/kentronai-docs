@@ -37,7 +37,7 @@ The recap has three states that read differently:
 | Unavailable | A reason and no button: `Connect a OpenAI key in organization settings to generate AI summaries.`, `There is no recorded activity to summarize yet.`, or `This session is not available.` |
 | Failed | The reason and a **Try again** button, for example `The model did not return a usable summary.` |
 
-The recap is generated with your organization's own provider key through the [LLM Gateway](/llm-gateway/bring-your-own-key), using `openai/gpt-5-mini` unless `CHAT_RECEIPT_RECAP_MODEL` names another model. Without a key it is unavailable rather than silently replaced by a machine-written blurb. A generated recap is stored and reused on later views until the conversation changes or you regenerate it, so opening Summary again does not cost another model call. Generation is bounded: the client gives up after 25 seconds with `The AI recap took too long. Your recorded outcome remains available. You can try again.`
+The recap is generated with your organization's own provider key through the [LLM Gateway](/llm-gateway/bring-your-own-key) — an organization owner or admin is the one who saves that key — using `openai/gpt-5-mini` unless `CHAT_RECEIPT_RECAP_MODEL` names another model. Without a key it is unavailable rather than silently replaced by a machine-written blurb. A generated recap is stored and reused on later views until the conversation changes or you regenerate it, so opening Summary again does not cost another model call. Generation is bounded: the client gives up after 25 seconds with `The AI recap took too long. Your recorded outcome remains available. You can try again.`
 
 Below the recap sit the stat cards:
 
@@ -57,7 +57,7 @@ Work is the short list. Its header reads `{n} meaningful actions`, described as 
 
 Chips filter the list, each carrying its count: **All work**, **Commands**, **Tools**, **Connected apps** and **Verified outputs**. Choosing **Connected apps** replaces the list with a card per connected app the run used. While the list is being derived the tab reads `Reconstructing work from receipts`.
 
-Each item is a numbered step typed as a **Command**, **Tool**, **Connected app** or **Evidence**, with a status badge of **Succeeded**, **Failed**, **Needs attention**, **Running** or **Observed**, its title (for example `Ran a command`), and the time it started. **Expand** shows the tool that ran, **What ran** with the command itself, an optional **Show inputs** block, **What happened** with the recorded outcome, and the step's `Receipt checkpoint #{n}`. Consecutive steps are joined by a **Then** connector.
+Each item is a numbered step typed as a **Command**, **Tool**, **Connected app** or **Evidence**, with a status badge of **Succeeded**, **Failed**, **Needs attention**, **Running** or **Observed**, its title — `Ran a command`, or `Ran command for <task id>` when the receipt names the Factory task that ran it, which is what the capture above shows — and the time it started. **Expand** shows the tool that ran, **What ran** with the command itself, an optional **Show inputs** block, **What happened** with the recorded outcome, and the step's `Receipt checkpoint #{n}`. Consecutive steps are joined by a **Then** connector.
 
 ### Transcript
 
@@ -103,5 +103,9 @@ The dialog quotes these messages when it cannot load the trail:
 |---|---|
 | `Receipts are not available for this task yet. Try again in a moment.` (or `…for this thread yet…`) | Nothing has been recorded for this run yet, or it is not readable from your organization; try again shortly. |
 | `Unable to load receipts for this task.` (or `…for this thread.`) | The load failed; use **Refresh agent replay**. |
+
+## Where to go after a run stops
+
+The commonest reason a run stops early is an app nobody has connected yet, and that is fixed outside chat: [what the MCP Gateway is](/mcp-gateway/overview) explains connections, workspaces and who owns them, and [Connect an app](/mcp-gateway/connect-an-app) walks an owner or admin through connecting the first one.
 
 Next step: [use a skill in chat](/co-worker/skills-in-chat).

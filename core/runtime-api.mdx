@@ -14,14 +14,12 @@ The runtime listens on port `8787` by default (`PORT` overrides it), so direct c
 Through the service gateway, the runtime is a private service mounted at the `/runtime` prefix, and the gateway strips that prefix before forwarding. `GET /runtime/healthz` at the gateway becomes `GET /healthz` at the runtime. Prefix every path on this page with `/runtime` when you go through the gateway.
 
 <Warning>
-**The runtime routes on this page have no authentication of their own.** Nothing at the route layer checks a caller's identity on the job, memory, chat or health routes — the control is network placement. The projection callback is the one exception, and only when you set a shared token for it. The service gateway marks the runtime as a private service and answers a `/runtime/*` request with **404** `Not found` unless the request's host is local, or the deployment sets `RECEIPT_SERVICE_GATEWAY_EXPOSURE=private` or `RECEIPT_SERVICE_GATEWAY_ALLOW_PRIVATE=1`. Never expose the runtime port directly.
+**The runtime routes on this page have no authentication of their own.** Nothing at the route layer checks a caller's identity on the job, memory, chat or health routes — the control is network placement, and the gateway answers a `/runtime/*` request that did not arrive on a loopback host with **404** `Not found`. The projection callback is the one exception, and only when you set a shared token for it. Never expose the runtime port directly, and read [processes, roles, and routing](/core/architecture) for the exposure settings that lift that gateway guard before you change one.
 </Warning>
 
 <Warning>
 `/connect` is the one runtime prefix the gateway deliberately does **not** strip. `/connect/...` arrives at the runtime with its `/connect/...` path intact, because that is what the runtime's own `/connect` routes expect. Do not add `/runtime` in front of a `/connect` path. Those routes are the public ones, and they do check identity: they require a Receipt Connect JWT.
 </Warning>
-
-Matching is longest-prefix, with `/` (the web app) always last. `/runtime-extra/health` does not match the `/runtime` prefix and falls through to the web app, and `/integrations-connectivity` does not match `/integrations`.
 
 ## Conventions
 

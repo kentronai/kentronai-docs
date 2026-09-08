@@ -9,7 +9,7 @@ This page answers the questions a security reviewer asks: where your credentials
 
 ### Receipt Connect connections
 
-For a Receipt Connect integration, the raw provider credential stays with the integration provider — Nango — which owns the OAuth or API-key authorization, the credential storage and the refresh state. Receipt stores only an encrypted reference: the mapping from `organization_id + workspace_id + provider + name` to the provider's own integration and connection identifiers. It lives in the `org_connection_secret` table as `ciphertext`, `iv`, `auth_tag` and `key_version`, encrypted with **AES-256-GCM** using a 12-byte IV and key version 1, under a wrapping key from deployment configuration (`RECEIPT_CONNECTION_ENCRYPTION_KEY_B64`) that must decode to exactly 32 bytes.
+For a Receipt Connect connection, the raw provider credential stays with the integration provider — Nango — which owns the OAuth or API-key authorization, the credential storage and the refresh state. Receipt stores only an encrypted reference: the mapping from `organization_id + workspace_id + provider + name` to the provider's own integration and connection identifiers. It lives in the `org_connection_secret` table as `ciphertext`, `iv`, `auth_tag` and `key_version`, encrypted with **AES-256-GCM** using a 12-byte IV and key version 1, under a wrapping key from deployment configuration (`RECEIPT_CONNECTION_ENCRYPTION_KEY_B64`) that must decode to exactly 32 bytes.
 
 There are four connection kinds. Two are the only cases where Receipt holds a credential at all, both explicitly user-initiated imports and both encrypted in the same table: an imported AWS `credential_process` bundle (`aws-credential-process`) and an imported GitHub token (`github-token`). A third, `local-aws-profile`, stores only a local AWS profile *name*, not keys. See [Receipt Connect](/mcp-gateway/receipt-connect).
 
@@ -45,11 +45,7 @@ The corollary is what you *do* have to protect: the server's own secrets, and th
 
 ### Which calls are recorded
 
-Every action through the REST call route (`POST /connect/call`) writes a `tool.called` receipt and, when the call succeeds, a `tool.observed` receipt into a per-workspace stream. Output stored in a receipt is truncated to 2,000 characters with a `truncated` flag. A failed call gets only `tool.called`, carrying its error. Receipt-writing failures are logged and swallowed rather than being allowed to fail a working tool call.
-
-<Warning>
-**Calls made through the MCP bridge are not yet recorded.** The JSON-RPC endpoint behind the bridge (`POST /connect/mcp`) enforces the same scope and allowlist checks, but writes no `tool.called` or `tool.observed` receipt. Do not treat gateway receipts as a complete record of tool activity until that gap closes. [Receipts and audit](/guard/receipts-and-audit) lists everything that does and does not write a receipt.
-</Warning>
+Every action through the REST call route (`POST /connect/call`) writes a `tool.called` receipt and, when the call succeeds, a `tool.observed` receipt into a per-workspace stream. **Calls made through the MCP bridge (`POST /connect/mcp`) are not yet recorded**, so do not treat gateway receipts as a complete record of tool activity. [Receipts and audit](/guard/receipts-and-audit) lists everything that does and does not write a receipt, how much of a tool's output a receipt keeps, and why receipt writing is best-effort.
 
 ## Telemetry: what leaves the deployment
 
@@ -111,18 +107,18 @@ Two smaller facts complete the picture. A separate, optional exporter for logs, 
 
 ## What zero data retention actually does
 
-Zero data retention is an **organization compliance policy**, not an infrastructure setting. The toggle, `Require ZDR (Zero Data Retention)`, describes itself as `Only allow models from AI providers that do not retain data. This is enforced at the provider level.`, and its help line reads `Applies immediately to model availability.` When it is on:
+Zero data retention is an **organization compliance policy**, not an infrastructure setting. An owner or admin turns it on in the compliance flags on `/organization/settings/compliance-policy`, or in the same section of `/organization/settings/provider-policy`; neither screen has a navigation entry, so you reach it by typing the URL. [Model policy](/llm-gateway/model-policy) walks through both. The toggle, `Require ZDR (Zero Data Retention)`, describes itself as `Only allow models from AI providers that do not retain data. This is enforced at the provider level.`, and its help line reads `Applies immediately to model availability.` When it is on:
 
 - **Model selection is restricted.** Any model whose catalog entry is not marked as zero-data-retention is denied, returning a 403 with the reason `policy_denied:compliance`. The catalog entry's flag is the whole test; there is no runtime check against the provider.
-- **Tool access is gated.** The tool policy adds a `blocked_by_compliance` reason. In this release that reason applies to one tool — Anthropic code execution — and only while the organization has no active executable Anthropic key.
+- **One tool is marked as blocked.** The tool policy adds a `blocked_by_compliance` reason for one tool — Anthropic code execution — while the organization has no active executable Anthropic key. The resolved tool list is recorded with the turn rather than attached to it: a direct answer is sent to the model with no provider tools in this release, so that reason is a record, not a gate.
 - **Saving an organization provider key trades it away for that provider.** Receipt asks first, in a dialog titled `Disable ZDR for this provider?` reading `Your organization requires ZDR right now. Saving a {providerName} API key will turn off ZDR enforcement for {providerName} requests that use your org key. Other providers keep their current ZDR behavior.`, confirmed with `Save key and disable ZDR`. That matches the policy engine: an active executable organization key sets a bypass and skips the compliance check for that model.
 
 <Note>
-Scope this claim carefully. Zero data retention restricts which models can be selected and gates tool access. It is **not** an end-to-end no-retention guarantee across the whole system, and it does **not** suppress application error telemetry.
+Scope this claim carefully. Zero data retention restricts which models can be selected, and marks one tool as blocked in the record of a turn. It is **not** an end-to-end no-retention guarantee across the whole system, and it does **not** suppress application error telemetry.
 </Note>
 
 <Warning>
-**The companion flag, `Require organization provider key`, is not enforced on the server.** It has a toggle and a description — `Only allow models from providers that have an active organization API key.` — and a real client-side effect: the chat model picker hides every model whose route providers lack an active executable organization key. But the server-side compliance check reads only the ZDR flag, so a request that names a hidden model is not rejected. Treat it as a picker filter, not a boundary.
+**The companion flag, `Require organization provider key`, is not enforced on the server.** It has a toggle and a description — `Only allow models from providers that have an active organization API key.` — and exactly one reader: a filter in the browser that drops every model whose route providers lack an active executable organization key from the chat model list. The server-side compliance check reads only the ZDR flag, so a request that names a filtered-out model is not rejected; and the model picker that list feeds is not mounted in this release, so the filter has nothing visible to act on either. Treat the flag as a record of intent, not a boundary.
 </Warning>
 
 ## Sessions, cookies, and origins

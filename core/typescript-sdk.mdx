@@ -3,7 +3,11 @@ title: "The TypeScript SDK and actions"
 description: "Write a receipt-native agent with the eight SDK exports, and pick the side-effect class that decides how the runtime is allowed to retry each action."
 ---
 
-The SDK is how you write a receipt-native agent: you declare the receipt types your agent reads and writes, fold them into a view, and list the actions that are runnable against that view. The runtime does the selecting, claiming, fencing and replaying.
+The SDK is how you write a receipt-native agent: you declare the receipt types your agent reads and writes, fold them into a view, and list the actions that are runnable against that view. The runtime does the rest — choosing which action runs next, claiming it so no second worker repeats it, and replaying the [receipt chain](/core/receipts-and-streams) to rebuild the view each pass.
+
+<Note>
+**The SDK is an in-repo module, not a published package.** It lives at `packages/receipt-app/src/sdk/index.ts` inside the repository, the package that holds it is private, and it is not listed in that package's exports — so there is nothing to install from a registry, and you write against it from a checkout. [Authoring an agent](/core/authoring-agents) covers the two directories a spec can live in and how to run one.
+</Note>
 
 ## What the SDK exports
 
@@ -157,7 +161,7 @@ selectionId  = "agent_selection_"         + sha256([runId, spec.id, spec.version
 invocationId = "agent_action_invocation_" + sha256([selectionId, actionId, index])[0:32]
 ```
 
-The pinned policy versions are `runtime-policy-v2` for control receipts and `scheduler-v2` for selection.
+The pinned policy versions are `runtime-policy-v2` for control receipts — unless the spec sets its own `runtimePolicyVersion` — and `scheduler-v2` for selection.
 
 Receipt content hashing sorts object keys before hashing, so a harmless difference in key order does not invalidate a recovered output manifest.
 
@@ -214,46 +218,6 @@ A durable merge claims with `merge.started`, records the chosen candidate as `me
 
 ## A minimal agent
 
-```ts
-// packages/receipt-app/src/agents/hello-agent.agent.ts — the remote-action location.
-// To run this inline with `receipt run`, put it at <repo root>/src/agents/hello-agent.agent.ts
-// and repoint the import below at the package SDK.
-import { defineAgent, receipt, action } from "../sdk/index";
-
-export default defineAgent({
-  id: "hello-agent",
-  version: "1.0.0",
-
-  receipts: {
-    "task.requested": receipt<{ prompt: string }>(),
-    "task.completed": receipt<{ output: string }>(),
-  },
-
-  view: ({ on }) => ({
-    prompt: on("task.requested").last()?.prompt,
-    done: on("task.completed").exists(),
-  }),
-
-  actions: () => [
-    action("complete", {
-      when: ({ view }) => Boolean(view.prompt) && !view.done,
-      sideEffects: "receipt_only",
-      run: async ({ view, emit }) => {
-        await emit("task.completed", { output: `Echo: ${view.prompt ?? ""}` });
-      },
-    }),
-  ],
-
-  goal: ({ view }) => Boolean(view.done),
-});
-```
-
-With the spec at `<repo root>/src/agents/hello-agent.agent.ts`, run it with the in-repo CLI:
-
-```bash
-./.receipt/bin/receipt run hello-agent --problem "say hello"
-```
-
-`--problem` (or `--prompt`) is required; without it the command throws `--problem is required`. The run seeds itself with a `task.requested` receipt if the spec declares that type, otherwise `prompt.received`; a spec that declares neither gets no seed receipt. The command prints `{ ok, status, mode: "inline", runId, stream, runStream, reason? }` and exits **2** when the loop does not reach `completed`.
+A working spec is about thirty lines: declare two receipt types, fold them into a view, expose one `action` that emits the terminal receipt, and let the goal predicate read it back. [Authoring an agent](/core/authoring-agents) carries that example in full, along with the two directories a spec can live in and the `receipt run` invocation that executes it inline from a checkout.
 
 Next step: [scaffold and run your own agent](/core/authoring-agents).

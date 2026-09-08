@@ -16,14 +16,14 @@ Every command here is run through the toolchain wrapper, `./bunw`.
 | `./bunw run lint` | ESLint over `apps/start` with `--max-warnings=0`, plus a `tsc --noEmit` typecheck of the Teams adapter. `packages/ui`, `packages/utils` and `apps/slack` define no `lint` script. |
 | `./bunw run check` | An alias for `check:fast`. |
 | `./bunw run check:fast` | `lint` → `sst:config:test` → the `apps/start` typecheck → the `apps/teams` tests → `receipt:check`. |
-| `./bunw run check:full` | `check:fast`, then the builds — `build:web` and `build:receipt`. |
+| `./bunw run check:full` | `check:fast`, then `build`, which is `build:web` followed by `build:receipt`. |
 | `./bunw run receipt:check` | `receipt:check-types` → `receipt:test` → `receipt:simulate:repeat`. |
 | `./bunw run receipt:check-types` | `tsc --noEmit` in five packages: `receipt-core`, `receipt-durable`, `receipt-live`, `receipt-dst` and `receipt-app`. |
 | `./bunw run receipt:test` | `bun test ./src` in those same five packages. |
-| `./bunw run sst:config:test` | 17 explicitly named Bun test files under `deploy/sst/`, `scripts/` and `tests/smoke/validate-stack.test.ts` — the deployment and configuration contract suite. |
+| `./bunw run sst:config:test` | 18 explicitly named Bun test files — one under `deploy/sst/`, sixteen under `scripts/`, and `tests/smoke/validate-stack.test.ts` — the deployment and configuration contract suite. |
 | `./bunw run --cwd apps/start test` | Vitest over `src/**/*.test.ts(x)`. A `pretest` hook recompiles i18n first. |
 | `./bunw run --cwd apps/start check-types` | `tsc --noEmit` for the web application. |
-| `./bunw run receipt:test:smoke` | `bun run build`, then `bun test ./tests/smoke --max-concurrency=1 --timeout=$RECEIPT_SMOKE_TIMEOUT_MS`, then the mock-LLM proxy integration test in a fresh process. There are 64 files in `tests/smoke`. |
+| `./bunw run receipt:test:smoke` | `bun run build`, then `bun test ./tests/smoke --max-concurrency=1 --timeout=$RECEIPT_SMOKE_TIMEOUT_MS` (default `240000`), then the mock-LLM proxy integration test in a fresh process. There are 64 files in `tests/smoke`. |
 | `./bunw run receipt:test:perf` | `tests/perf/stream-100k.test.ts`, which replays 100 000 receipts through the Postgres store. It skips itself unless `RECEIPT_TEST_POSTGRES_URL` or `ZERO_UPSTREAM_DB` is set. |
 | `./bunw run validate:stack` | The whole-stack harness — see below. |
 
@@ -67,18 +67,18 @@ The `@receipt/dst` package supplies the primitives that make a simulated run rep
 | Export | What it does |
 |---|---|
 | `createSimulationVirtualClock(seed)` | A virtual clock with `now()` and `tick(ms?)` |
-| `withSimulationDateNow(...)` | Patches the ambient `Date.now` for one scope |
+| `withSimulationDateNow(clock, run)` | Runs one scope inside a deterministic environment built from that clock alone |
 | `createDeterministicSimulationRandom(...)` | A seeded PRNG |
-| `createDeterministicSimulationEntropy({...})` | A labelled, domain-separated, replayable entropy tape with `float`, `int` and `choice` draws |
-| `createDeterministicSimulationIdSource(...)` | Deterministic queue, job, command and event ids |
-| `withDeterministicSimulationEnvironment(...)` | Patches `Date.now`, `Math.random` and optionally timers for one scope |
+| `createDeterministicSimulationEntropy({...})` | A labelled, replayable entropy tape recording `float`, `int` and `choice` draws, plus a `shuffle` built from them |
+| `createDeterministicSimulationIdSource(seed)` | A seeded id factory; the simulations pass it in as the `idFactory` behind queue, job, command and event ids |
+| `withDeterministicSimulationEnvironment(...)` | Patches `Date`, `Math.random`, `performance.now` and the crypto random sources — and, when you pass `timers`, `setTimeout` and `setInterval` — for one scope |
 | `traceSimulationEvent(...)` | Appends a trace event |
-| `createDeterministicSimulationScheduler({...})` | Turns `setTimeout` and `setInterval` into ordered simulation steps |
+| `createDeterministicSimulationScheduler({...})` | Runs scheduled steps in a deterministic order under a step limit; the environment's `timers` option routes `setTimeout` and `setInterval` into it |
 | `createInMemorySimulationReceiptStore<B>()` | An in-memory receipt store |
 | `createInMemorySimulationBranchStore()` | An in-memory branch store |
-| `DEFAULT_DETERMINISTIC_SIMULATION_MAX_STEPS` | The default step limit, `10 000` |
+| `DEFAULT_DETERMINISTIC_SIMULATION_MAX_STEPS` | The default step limit, `10_000` |
 
-Ordering of steps scheduled for the same instant is configurable: `"fifo"`, `"lifo"`, `"actor"`, `"label"`, or `{ kind: "seeded", seed }`.
+Ordering of steps scheduled for the same instant is configurable: `"fifo"` (the default), `"lifo"`, `"actor"`, `"label"`, or `{ kind: "seeded", seed }`.
 
 Three typed failures make non-determinism legible rather than intermittent:
 
@@ -115,7 +115,7 @@ Every scenario sets the process exit code to 1 when it produces failures.
 | `--corpus default\|none\|<path>` | none | `default` resolves to the checked-in search regression corpus. |
 | `--corpus-file <path>` | none | An explicit corpus file. |
 | `--corpus-only` | off | Sets seeds to 0. Requires a corpus, else `--corpus-only requires --corpus or --corpus-file`. |
-| `--coverage-floor <metric>=<value>` | built-in floors | Repeatable. An unknown metric gives `--coverage-floor must be metric=value where metric is one of: <the built-in coverage keys>`; a negative or non-numeric value gives `--coverage-floor <metric>=<value> must use a non-negative number`. |
+| `--coverage-floor <metric>=<value>` | built-in floors | Repeatable. An unknown metric gives `--coverage-floor must be metric=value where metric is one of: <the built-in coverage keys>`; a negative or non-numeric value names the metric back to you, for example `--coverage-floor schedulerActors=<value> must use a non-negative number`. |
 | `--require-property <id\|all>` | none | Repeatable and comma-separated. An unknown id gives `Unknown reliability property '<x>'. Use <list>.` |
 | `--expect-coverage-digest <sha256>` | none | Mutually exclusive with `--coverage-baseline`: `use either --expect-coverage-digest or --coverage-baseline, not both`. |
 | `--coverage-baseline <artifact.json>` | none | Must contain `coverageDigest`, else `coverage baseline <path> must contain coverageDigest`. |
@@ -156,7 +156,7 @@ The corpus workflow is three steps, and each one refuses rather than guessing.
 Any other corpus action is answered with `receipt factory simulate corpus supports: add, reduce, promote`.
 
 <Note>
-A corpus file is a small JSON object — a `version`, a `description`, and a `seeds` array whose entries each pair a `seed` integer with a human-written `reason`. Nothing from a real run is copied into it: the payload is integers plus the rationale you type.
+A corpus file is a small JSON object — a `version`, a `description`, and a `seeds` array whose entries pair a `seed` integer with the optional `reason` you type. Nothing from a real run is copied into it: the payload is integers plus the rationale you write.
 </Note>
 
 The repository wraps the common invocations as scripts: `receipt:simulate` (a `search` run against the default corpus), `receipt:simulate:corpus`, `receipt:simulate:repeat` (the one `receipt:check` runs, with `--require-property all` and a repeat of 2 by default), `receipt:simulate:nightly`, and `receipt:simulate:ui`, which starts a local simulator UI on the port named by `RECEIPT_SIMULATOR_UI_PORT`, default `4397`.
@@ -172,15 +172,15 @@ receipt eval replay <run-id> [--json]
 receipt eval list-scenarios [<scenarioDir>] [--json]
 ```
 
-Scenarios are JSON files under the eval scenario root, with `software/` and `computer-use/` subdirectories. A scenario resolves from an absolute path, a repo-relative path, `<root>/<id>.json`, or an id matched by walking both roots. Every subcommand syncs the eval-run and computer-use-session projections before it does anything else.
+Scenarios are JSON files under the eval scenario root, `eval/scenarios`, with `software/` and `computer-use/` subdirectories. A scenario resolves from an absolute path, a repo-relative path, `<root>/<id>.json`, or an id matched by walking both roots. `inspect` and `replay` sync the eval-run and computer-use-session projections before they read anything; `run` and `batch` sync them once the run finishes; `report` syncs only the eval-run projection; `list-scenarios` walks the filesystem and syncs nothing.
 
-`report` prints a scorecard: `Receipt Eval Report`, `Runs`, `Pass rate`, `Abstraction miss rate`, `Revert rate`, `Strong handoff completeness rate`, then one line per run. `replay` runs a `receipt dst` audit scoped to that run's stream.
+`report` prints a scorecard over the most recent runs (`--limit`, clamped 1–200, default 20): `Receipt Eval Report`, `Runs`, `Pass rate`, `Abstraction miss rate`, `Revert rate`, `Strong handoff completeness rate`, then one line per run. `replay` runs a `receipt dst` audit scoped to that run's stream, and a second one over the computer-use session stream when the run has one.
 
 <Note>
 **The semantic oracle is off unless you pass `--organization-id`,** and it is enabled only when that organization has an OpenAI BYOK key. Without it the evaluation still runs, but the semantic scoring does not.
 </Note>
 
-Error strings are exact: `eval subcommand is required`, `eval run requires a scenario id or path`, `eval inspect requires a run id`, `eval replay requires a run id`, `eval run '<id>' not found`, `Unknown eval subcommand '<x>'`.
+Error strings are exact: `eval subcommand is required`, `eval run requires a scenario id or path`, `eval inspect requires a run id`, `eval replay requires a run id`, `eval run '<id>' not found`, `Unable to resolve eval scenario '<id>'`, `Unknown eval subcommand '<x>'`.
 
 ## The receipt-integrity gate
 

@@ -59,7 +59,7 @@ A tool that does not exist and a tool that exists but is disabled return the **i
 Saving a name that is not a published operation of that connection is rejected up front with `integration action '<name>' is not available`.
 
 <Warning>
-**There is no per-action approval prompt in this release.** Write operations are off until an owner or admin enables them for that connection — that switch, and the token scope, are the whole control. Nothing pauses a run to ask a person before a state-changing call. The **Tool approval** module on the [Policies page](/guard/policies) stores rules that no runtime path reads yet.
+**There is no per-action approval prompt in this release.** Write operations are off until a **workspace owner or admin** enables them for that connection — that switch, and the token scope, are the whole control. A caller whose token lacks `connect:write` is refused with HTTP 400 and `integration action '<tool>' requires connect:write`; nothing pauses a run to ask a person before a state-changing call. The **Tool approval** module on the [Policies page](/guard/policies) stores rules that no runtime path reads yet.
 </Warning>
 
 The token gate rarely stops anything on its own: a CLI session token carries `connect:write`, and a Factory objective's execution contract adds it whenever the task needs a Receipt Connect capability. The per-connection allowlist is the gate that decides.
@@ -125,7 +125,7 @@ Anything larger is rejected with `enabledActions must be an array of action name
 A tool call made through the REST route `POST /connect/call` writes a `tool.called` receipt and, on success, a `tool.observed` receipt, onto the per-workspace stream `receipt-connect/gateway/<orgId>/<workspaceId>`. Output is truncated at 2,000 characters with a truncation flag. A failed call records only `tool.called`, with its error — which is how outcomes are scored later. A call with no workspace in scope is not recorded at all.
 
 <Note>
-Calls that arrive over the MCP protocol at `POST /connect/mcp` — the route [MCP clients and the `receipt mcp` bridge](/mcp-gateway/aggregate-server) use — are **not** recorded as receipts in this release. The allowlist and scope gates above apply to them identically; only the receipt is missing.
+Calls that arrive over the MCP protocol at `POST /connect/mcp` — the route [MCP clients and the `receipt mcp` bridge](/mcp-gateway/aggregate-server) use — are **not yet recorded as receipts**. The allowlist and scope gates above apply to them identically; only the receipt is missing.
 </Note>
 
 Next step: [publish these tools to an MCP client](/mcp-gateway/aggregate-server).

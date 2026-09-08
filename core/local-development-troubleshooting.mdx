@@ -57,7 +57,7 @@ With neither a stored key nor platform credit you will see, in web chat:
 And from the runtime's funding resolver, when credit is authorized but no key is present: `Platform-funded OpenAI access is authorized, but OPENAI_API_KEY is unavailable.`
 
 <Warning>
-`BYOK_ENCRYPTION_KEY_B64` is an AES-256-GCM key. Do not rotate it once organizations have saved keys: no re-encryption routine exists anywhere in the codebase and decryption hard-fails on any other key version, so every stored key becomes permanently undecryptable and each organization must re-enter its key. The same applies to `RECEIPT_CONNECTION_ENCRYPTION_KEY_B64` and stored connection bundles. See [Bring your own key](/llm-gateway/bring-your-own-key).
+**Do not rotate `BYOK_ENCRYPTION_KEY_B64` or `RECEIPT_CONNECTION_ENCRYPTION_KEY_B64` once anything has been saved with them**, not even locally — the rotation cannot be undone, and [Configuration, secrets, and keys](/core/configuration#encryption-keys-and-shared-secrets) explains what it destroys. Generate both once, before you sign up for the first time.
 </Warning>
 
 ## Offline development with the mock LLM proxy
@@ -133,13 +133,9 @@ The proxy's own banner says `MOCK_OPENAI_API_KEY=mock-key` while the code's defa
 
 ### Sync and the database
 
-| Symptom | Cause | Fix |
-| --- | --- | --- |
-| The UI loads but no data ever syncs | A table missing from the `zero_data` publication silently breaks **all** client sync | `./bunw run --cwd apps/start zero:reset`, or `zero:migrate` against a live stack, and confirm Postgres runs with `wal_level=logical` |
-| A newly published table shows no rows | A live replica is never backfilled for a table added to the publication after it was built | `zero:reset`, which drops and recreates the publication, deletes `zero.db*` and so forces a full initial sync; also clear browser site data |
-| zero-cache exits shortly after start, following a schema reset | zero-cache reuses `apps/start/zero.db` across resets and replays `CREATE TABLE` against tables that already exist in the replica | Delete `zero.db*`, or let `zero:reset` do it |
-| `relation "<schema>.receipt_job_projection" does not exist` during `zero:migrate` | The Zero migration, which refreshes `zero_data`, ran before Receipt's durable projection tables existed in the configured schema | The supervisor pre-migrates the Receipt schema first; if you drive the migration by hand, use the same ordering |
-| `Migration <file> was already applied with a different checksum. Create a new migration file instead of editing old ones.` | An applied migration file was edited in place | Restore it and add a new timestamped file instead |
+Sync and migration failures behave the same locally as on a deployment, so they are catalogued once, with their causes, in [Postgres, migrations, and the sync publication](/core/database-and-migrations#symptoms-and-their-causes) — a UI that loads with no data, a newly published table with no rows, `zero-cache` exiting shortly after a schema reset, and `relation "<schema>.receipt_job_projection" does not exist` during a migration. The checksum refusal you get after editing an already-applied migration is on the same page, under [never edit an applied migration](/core/database-and-migrations#never-edit-an-applied-migration).
+
+Locally the blunt fix for the first three is `./bunw run --cwd apps/start zero:reset`, which recreates the `zero_data` publication and deletes `zero.db*` so the replica is rebuilt from scratch; clear browser site data afterwards, and confirm Postgres is running with `wal_level=logical`.
 
 ### Environment values and origins
 

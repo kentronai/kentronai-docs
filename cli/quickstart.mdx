@@ -10,7 +10,7 @@ Everything below targets the hosted app. The released binary already knows the h
 ## Before you start
 
 - **macOS or Linux**, on arm64 or x64. There is no Windows build.
-- **An account on `app.kentron.ai`, signed in in the browser you will approve from**, with an organization selected. The browser step approves the CLI for whichever organization that browser session is in. With no active organization the page answers `Select a workspace first` and sign-in cannot finish.
+- **A browser already signed in to `app.kentron.ai`**, with an organization selected. If you have no Kentron account yet, [create one first](/core/your-account) — the CLI cannot sign you up. The browser step approves the CLI for whichever organization that browser session is in. With no active organization the page answers `Select a workspace first` and sign-in cannot finish.
 - **Codex on your `PATH`**, but only for the last step. `receipt mcp install codex` shells out to `codex mcp add` rather than editing the config file itself, so it needs that binary. Everything before it works without Codex.
 
 <Steps>
@@ -58,6 +58,7 @@ receipt setup
 It requests a code, prints it, and opens your browser:
 
 ```
+Starting Receipt Connect sign-in at https://app.kentron.ai...
 Step 1 of 2: sign in to Receipt
   Open: https://app.kentron.ai/api/receipt-connect/cli-login?user_code=ABCD-EFGH
   Code: ABCD-EFGH
@@ -78,7 +79,7 @@ Claude observer: not installed (Unable to find the Claude observer companion bin
 Two things to read correctly. That connector list is the whole catalog — all 63 connectable apps — not the ones your organization has connected. And the observer line is not a failure: the current release ships without that companion binary, and sign-in is unaffected. See [Observing Claude Code](/cli/observe-claude-code).
 
 <Warning>
-**Your session token is good for 12 hours.** After that, `workspace`, `tools` and `mcp` fail with `unauthorized`. Run `receipt setup` again — it detects the expired token and re-runs the browser login for you. The token sits in plaintext in `~/.receipt/session.json`, protected only by its `0600` file mode, so do not copy that file between machines, commit it, or attach it to a bug report. [What setup writes to disk](/cli/setup).
+**Your session token is good for 12 hours.** After that `receipt workspace list`, `receipt tools list` and `receipt mcp serve` answer `unauthorized`. Run `receipt setup` again; it detects the expired token and re-runs the browser login for you. The token sits in plaintext in `~/.receipt/session.json` and in the matching per-target copy `~/.receipt/session.prod.json`, protected only by their `0600` file mode, so do not copy those files between machines, commit them, or attach them to a bug report. [What setup writes to disk](/cli/setup).
 </Warning>
 </Step>
 
@@ -124,16 +125,16 @@ Current connections:
   github:default valid
 ```
 
-To add one, name the connector by its id:
+To add one, name the connector by its id — [the connector catalog](/catalog/connectors) lists every id you can use:
 
 ```bash
 receipt connect github
 ```
 
-The browser opens, you authorize the provider, and the CLI polls every two seconds until a connection for it reports `valid`, ending with `receipt connect: github connection 'default' is ready for server jobs.` Picking a multi-word entry out of the interactive numbered menu instead fails with `unsupported Receipt Connect onboarding choice: <Label>`, so pass the id. [Connecting providers from the CLI](/cli/connect) covers the flags and the failure modes, and [Connect an app](/mcp-gateway/connect-an-app) does the same job in the web interface.
+In a terminal the CLI prints `Step 2 of 2: authorize github` with the link, then waits at `Press Enter to open github authorization...` before opening the browser. You authorize the provider, and the CLI polls every two seconds until a connection for it reports `valid`, ending with `receipt connect: github connection 'default' is ready for server jobs.` Picking a multi-word entry out of the interactive numbered menu instead fails with `unsupported Receipt Connect onboarding choice: <Label>`, so pass the id. [Connecting providers from the CLI](/cli/connect) covers the flags and the failure modes, and [Connect an app](/mcp-gateway/connect-an-app) does the same job in the web interface.
 
 <Note>
-Connections created from the CLI always land in the **Default** workspace, whatever workspace your session is using at the time, and always under the name `default`. That is why `receipt connect status` and `receipt tools list` can legitimately disagree.
+Connections created from the CLI always take the name `default` — `receipt connect` sends no connection name, so named connections such as `aws.prod` come from the web interface only. They land in whichever workspace your session token currently carries, which is **Default** until you run `receipt workspace use`.
 </Note>
 </Step>
 
@@ -148,7 +149,12 @@ receipt tools list
 {
   "ok": true,
   "tools": [
-    { "name": "receipt_<provider>_<connection>_<tool>_<digest>", "description": "..." }
+    {
+      "name": "receipt_<provider>_<connection>_<tool>_<digest>",
+      "description": "...",
+      "inputSchema": { "type": "object", "properties": {} },
+      "annotations": { "readOnlyHint": true }
+    }
   ],
   "workspace": {
     "kind": "workspace",
@@ -159,7 +165,7 @@ receipt tools list
 }
 ```
 
-Tool names are opaque aliases. Copy them exactly, never construct one, and re-list after switching workspaces or reconnecting an account. Write tools appear only when the connection's policy enables them — see [Tools and permissions](/mcp-gateway/tools-and-permissions).
+Tool names are opaque aliases. Copy them exactly, never construct one, and re-list after switching workspaces or reconnecting an account. `annotations.readOnlyHint` is authoritative, and write tools appear only after an owner or admin has enabled writes for that connection; there is no per-action approval prompt in this release — see [Tools and permissions](/mcp-gateway/tools-and-permissions).
 
 An empty list almost always means the workspace in your token holds no valid connection yet; check with `receipt workspace current` and `receipt connect status`. Provider-native MCP connectors are the other explanation: they are left out of the aggregate list and reachable only through `receipt tools list --connection <connection>`.
 
@@ -171,7 +177,7 @@ From here, `receipt tools describe <tool>` returns one entry and `receipt tools 
 receipt mcp install codex
 ```
 
-It backs up your Codex config, runs `codex mcp add`, verifies that Codex reports the server afterwards, and prints:
+It backs up your Codex config if one already exists, runs `codex mcp add`, verifies that Codex reports the server afterwards, and prints:
 
 ```json
 {
@@ -213,10 +219,10 @@ receipt mcp config --client generic
 A signed-in session bound to one workspace, a view of that workspace's connections, the tool list they publish, and a Codex client pointed at the same gateway.
 </Check>
 
-Provider credentials stayed on the server throughout. The only sensitive thing this left on your machine is `~/.receipt/session.json`, which holds a 12-hour bearer token — signing out with `receipt logout` deletes it locally but does not revoke it at the gateway, so treat a leaked copy as live credentials until it expires.
+Provider credentials stayed on the server throughout. The only sensitive thing this left on your machine is the saved session — `~/.receipt/session.json` and `~/.receipt/session.prod.json` — which holds a 12-hour bearer token. Signing out with `receipt logout` deletes both files locally but does not revoke the token at the gateway, so treat a leaked copy as live credentials until it expires.
 
 <Note>
-Two parsing quirks catch almost everyone in the first session. `receipt tools --help`, `receipt mcp --help` and `receipt workspace --help` never print help — they run instead — and a bare `receipt` starts interactive onboarding, browser sign-in included, rather than showing usage. Usage comes only from `receipt --help`, `receipt help`, `receipt -h` and `receipt connect --help`, with nothing after them. [The parsing rules](/cli/overview) explain the ordering behind both.
+Two parsing quirks catch almost everyone in the first session. `receipt tools --help`, `receipt mcp --help` and `receipt workspace --help` never print help — those three handlers run before the help check — and a bare `receipt` starts interactive onboarding, browser sign-in included, rather than showing usage. Everywhere else `--help` works, along with `receipt help` and `receipt -h`, but only with nothing after it: `receipt --help connect` reads `connect` as the flag's value and starts a sign-in. [The parsing rules](/cli/overview) explain the ordering behind both.
 </Note>
 
 Anything that went wrong along the way is in [CLI troubleshooting](/cli/troubleshooting), which lists the error strings verbatim with a cause and a fix for each.

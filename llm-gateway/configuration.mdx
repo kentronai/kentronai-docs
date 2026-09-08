@@ -40,7 +40,7 @@ There is no platform-funded Anthropic route. Anthropic models execute only again
 
 ## The BYOK wrapping key
 
-`BYOK_ENCRYPTION_KEY_B64` is the AES-256-GCM wrapping key for organization provider API keys. It must decode to exactly 32 bytes. The cipher uses a 12-byte IV and key version 1, and the key-resolution log line carries only a fingerprint of the provider key it resolved — the first twelve hex characters of its SHA-256 — never the key itself.
+`BYOK_ENCRYPTION_KEY_B64` is the AES-256-GCM wrapping key for organization provider API keys. It must decode to exactly 32 bytes. The cipher uses a 12-byte IV and key version 1, and the key-resolution log line carries only a fingerprint of the provider key it resolved — the first 12 hex characters of its SHA-256 — never the key itself.
 
 ```bash
 openssl rand -base64 32
@@ -59,11 +59,13 @@ Save and remove operations map failures to operator-facing strings: the missing-
 **Rotating this key destroys the data it protects. There is no way back.**
 
 There is no re-encryption routine anywhere in the codebase, and decryption hard-fails on any other key version. Rotating `BYOK_ENCRYPTION_KEY_B64` after organizations have saved provider keys makes every stored key permanently undecryptable — the only recovery is for each organization to re-enter its keys by hand. Generate it once, before the first key is saved, and store it where you will not lose it.
+
+The same applies to `RECEIPT_CONNECTION_ENCRYPTION_KEY_B64`, the wrapping key for Receipt Connect connection references, which is documented with the rest of the platform variables in [Configuration, secrets, and keys](/core/configuration).
 </Warning>
 
 ## Strict mode
 
-`CHAT_REQUIRE_BYOK` is compared literally against the string `true`; anything else, including unset, leaves it off. The cloud template ships `CHAT_REQUIRE_BYOK=false` with the comment "Optional strict mode. Set true only when every model request must use a workspace-managed provider key instead of the platform-credit gateway."
+`CHAT_REQUIRE_BYOK` is compared literally against the string `true`; anything else, including unset, leaves it off. The cloud template ships `CHAT_REQUIRE_BYOK=false` with the comment "Optional strict mode. Set true only when every model request must use a workspace-managed provider key instead of the platform-credit gateway." Read that comment as **an organization or workspace provider key**: the resolver reads the request's workspace scope when the turn carries a workspace and the organization scope otherwise. See [Bring your own key](/llm-gateway/bring-your-own-key) for the two scopes, and for the organization-scope summary that can skip a provider even in strict mode.
 
 Normally, when the organization's stored provider-key snapshot says no key exists, credential resolution stops there and the turn runs on platform credit. Strict mode skips that short-circuit and turns a missing key into a 403 carrying **"This provider requires an organization API key, but no key is configured."**
 
@@ -92,16 +94,16 @@ Each must be a positive integer or resolution throws `Expected {NAME} to be a po
 
 ## Model defaults
 
-Each variable below is an override; unset, the identifier in the second column is used.
+Each variable below is an override; unset, the identifier in the second column is used. The first two name models for chat-side calls. The rest name models for the Receipt runtime and for Factory, the engine that runs a [background objective](/co-worker/background-runs) as a set of sandboxed tasks — see [Factory engine](/core/factory-engine).
 
 | Variable | Default | Used for |
 | --- | --- | --- |
 | `CHAT_TITLE_GENERATION_MODEL` | `openai/gpt-5-mini` | The thread title generated on a first turn |
 | `CHAT_RECEIPT_RECAP_MODEL` | `openai/gpt-5-mini` | The recap shown in the Replay dialog |
 | `OPENAI_MODEL` | `gpt-5.6-luna` | Generic runtime OpenAI calls |
-| `RECEIPT_FACTORY_CHAT_MODEL` | `OPENAI_MODEL`, then `gpt-5.4-mini` | The runtime's chat lane |
-| `RECEIPT_FACTORY_TASK_MODEL` | `gpt-5.6-luna` | Factory task workers |
-| `RECEIPT_FACTORY_OBJECTIVE_SUPERVISOR_MODEL`, then `RECEIPT_FACTORY_SUPERVISOR_MODEL` | `gpt-5.6-terra` | The objective supervisor's planning and evidence decisions |
+| `RECEIPT_FACTORY_CHAT_MODEL` | `OPENAI_MODEL`, then `gpt-5.4-mini` | The runtime's chat lane: the router and direct replies behind Slack and Teams |
+| `RECEIPT_FACTORY_TASK_MODEL` | `gpt-5.6-luna` | The workers that run one task of an objective |
+| `RECEIPT_FACTORY_OBJECTIVE_SUPERVISOR_MODEL`, then `RECEIPT_FACTORY_SUPERVISOR_MODEL` | `gpt-5.6-terra` | The supervisor that plans an objective into tasks and judges their evidence |
 | `RECEIPT_FACTORY_PLATFORM_CODEX_MODEL` | `gpt-5.6-luna` | Pinned model for platform-funded sandbox runs |
 | `RECEIPT_FACTORY_PLATFORM_SUPERVISOR_MODEL` | `gpt-5.6-luna` | Supervisor model for platform-funded runs |
 
@@ -170,7 +172,7 @@ The platform-credit sentence tells users to go to "Billing & Credits". No page h
 
 ## Machine reasons behind a 403
 
-A denial carries a machine reason internally. The reason picks the sentence the user reads and decides whether the failure is reported to error tracking, but it stays inside the server: it is not part of the envelope, and the wide event emitted for the request records the error tag, code and i18n key rather than the reason string. Use `error.i18nKey` to tell denials apart from the outside.
+A denial carries a machine reason internally. The reason picks the sentence the user reads and decides whether the failure is reported to error tracking, but it stays inside the server: it is not part of the envelope, and the structured log line written for the request records the error tag, code and i18n key rather than the reason string. Use `error.i18nKey` to tell denials apart from the outside.
 
 | Reason | Raised when | Sentence shown |
 | --- | --- | --- |

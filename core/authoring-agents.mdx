@@ -178,19 +178,7 @@ Unable to resolve run/stream '<value>'
 
 ## Interpreting the control-receipt trail
 
-The runtime records its own decisions as receipts alongside yours. The canonical set is:
-
-```
-run.started, run.completed, run.blocked, run.failed
-action.selected, action.started, action.output.manifest,
-action.completed, action.failed, action.superseded
-human.requested, human.responded
-goal.completed
-merge.started, merge.output.manifest, merge.selected,
-merge.applied, merge.skipped, merge.failed
-```
-
-Read against that list, a trace answers why a run stopped where it did.
+The runtime records its own decisions as receipts alongside yours, drawn from the canonical control-receipt set listed in [the SDK reference](/core/typescript-sdk#control-receipts). Read a trace against that list and it tells you why a run stopped where it did.
 
 | What the trail shows | What it means |
 |---|---|
@@ -202,18 +190,9 @@ Read against that list, a trace answers why a run stopped where it did.
 | `run.completed` with the note `goal satisfied` | The goal predicate returned true. `goal.completed` is a declared control-receipt type that this loop never appends, so do not wait for one. |
 | No further `action.selected` | Selection found nothing runnable; the scheduler's reason for that selection is `settled`. |
 
-Selection itself is deterministic. Every runnable action is sorted by kind priority — `human`, then `assistant`, then `action`, then `tool`. If any of them is `exclusive`, the first one in that order is selected alone and the reason is `exclusive`. Otherwise the ordered list is sliced to a hard cap: the smallest `maxConcurrency` declared by any runnable action, taken together with the spec default (8 when the spec sets no `maxConcurrency`) and floored at 1. The reason is `concurrency-cap` when that cap is smaller than the number of runnable actions, and `priority-order` when it is not.
+Which actions a pass picked, and the `exclusive`, `concurrency-cap`, `priority-order` or `settled` reason it recorded for that choice, follow the deterministic selection rules in [the SDK reference](/core/typescript-sdk#the-four-kinds-and-how-they-are-selected).
 
-Both identifiers in the trail are content hashes, so a replay reproduces them:
-
-```
-selectionId  = "agent_selection_"         + sha256([runId, spec.id, spec.version, policyVersion,
-                                                    schedulerPolicyVersion, selectedHead ?? "root",
-                                                    actionIds])[0:32]
-invocationId = "agent_action_invocation_" + sha256([selectionId, actionId, index])[0:32]
-```
-
-The control policy version is `runtime-policy-v2` unless the spec sets its own `runtimePolicyVersion`; the scheduler policy version is always `scheduler-v2`.
+The `selectionId` and `invocationId` in the trail are SHA-256 digests of the run, spec and action they belong to rather than random values, so a recovered run reproduces exactly the same ids — the two formulas and the policy versions they hash are on [the same page](/core/typescript-sdk#determinism).
 
 ## What `receipt dev` starts
 

@@ -5,6 +5,8 @@ description: "Learn the composer as it actually behaves, including the Skills ch
 
 Open **Chat**, type what you want in plain language, and press send. Receipt either answers you directly in the thread or, when the request needs evidence from a connected system, starts a background run and reports back when it is done. This page walks the composer control by control, so you know what each one does before you rely on it.
 
+You need a Kentron account and an active organization — [create one](/core/your-account); sign-up on the hosted app is self-service.
+
 <Warning>
 **Two composer controls do not change what Receipt does in this release.** The checkboxes in the **Tools** group of the `+` menu — Web Search and Code Interpreter included — are recorded with your thread but never read when a turn runs: direct answers are sent with no tools attached, and background runs do not consult them either. And **Study Mode** pins `openai/gpt-oss-120b`, a model this release cannot reach: the catalog routes it through Azure and the shared AI gateway only, while Receipt executes OpenAI and Anthropic routes. A turn sent in Study Mode therefore ends in an error instead of an answer. Everything else on this page works as described.
 </Warning>
@@ -13,7 +15,7 @@ Open **Chat**, type what you want in plain language, and press send. Receipt eit
 
 A new chat opens on an empty state: `Hello, <name>` and `What would you like to explore?` The message box's placeholder cycles through 25 example goals, a new one every 3.2 seconds, each starting `Ask Receipt to …` — for instance `Ask Receipt to review IAM roles for overly broad permissions` or `Ask Receipt to check for expired SSL certificates across domains`. They are examples of the kind of request Receipt is built for, not commands; type your own goal in your own words. Once you're inside a thread, the placeholder becomes `Ask anything`.
 
-When you send, Receipt first decides what kind of turn this is. A question it can answer from the conversation gets a streamed reply in the thread. A request that needs current data from your connected systems, a file, code, or anything outside the chat becomes a [background run](/co-worker/background-runs). A request to write a new organization skill gets a draft you can review. While that decision is being made, the thread shows a status line above the reply — `Sending your message to Beetle...` first, then whatever the run reports. Beetle is the assistant's name in the interface. The three routes are described in [What the AI Co-Worker does](/co-worker/overview), and the pipeline behind them in [How it works](/co-worker/how-it-works).
+When you send, Receipt first decides what kind of turn this is. A question it can answer from the conversation gets a streamed reply in the thread. A request that needs current data from your connected systems, a file, code, or anything outside the chat becomes a [background run](/co-worker/background-runs). A request to write a new organization skill gets a draft you can review. While that decision is being made, the thread shows a status line above the reply — `Sending your message to Beetle...` first, then whatever the run reports ([Beetle](/introduction) is the interface's name for the assistant). The three routes are described in [What the AI Co-Worker does](/co-worker/overview), and the pipeline behind them in [How it works](/co-worker/how-it-works).
 
 ## Sending a message
 
@@ -39,18 +41,7 @@ Checking a tool's box does not mean the model will use it on this turn. Direct a
 
 ## The Skills chip
 
-Beside `+` sits a **Skills** chip. It is how you tell a run to follow one of your organization's skills — the versioned instruction files an owner or admin has added on the Skills page.
-
-<Frame caption="The Skills chip open on a new chat. Under the heading Use a skill, each enabled skill is listed by name with its slug underneath; six are shown here, the menu's maximum. Create skill and Manage skills are further down the same menu, below the edge of this capture.">
-  <img src="/images/co-worker/composer-skills-menu.png" alt="The Skills chip menu in the Receipt composer, listing six enabled organization skills with their slugs under the heading Use a skill." />
-</Frame>
-
-- Under **Use a skill**, pick a skill and its slug is appended to whatever you have already typed as `/slug`, separated by a space from the text in front of it and followed by another — it composes with a half-written prompt rather than replacing it. Type the rest of your request around it and send as usual.
-- Only skills that are active and enabled appear, and any member of the organization can pick one. The menu shows at most six; when there are more, a final line counts the rest — `3 more on the Skills page` — and opens the page.
-- With nothing enabled, the menu says `No enabled skills yet.`
-- **Create skill** opens the Skills page and asks the browser for its upload picker straight away, so you land on the file chooser rather than on a list; if the browser refuses to open a file dialog it did not initiate, the page's **Add skill** button is focused instead. **Manage skills** opens the page itself. Both destinations are owner and admin only; a member who picks them never sees the page or an access-denied screen — the settings route sends them to `/`, which puts a signed-in user back in Chat.
-
-The slug is ordinary text in your message. Receipt does not treat it as a command: the router and any background run read it like the rest of your prompt. What a run does with it, and how to have Receipt draft a new skill from the conversation, is on [Skills in chat](/co-worker/skills-in-chat); the files themselves are described under [Skills](/catalog/skills).
+Beside `+` sits a **Skills** chip. It lists the organization skills an owner or admin has enabled — versioned instruction files a background run can follow — and picking one appends its `/slug` to whatever you have already typed. The slug is ordinary text: Receipt has no slash-command parser, so the router and any background run read it like the rest of your prompt. [Using skills in chat](/co-worker/skills-in-chat) covers the menu, what a run does with the slug, and how to have Receipt draft a new skill from the conversation; the files themselves are described under [Skills](/catalog/skills).
 
 ## What you can't change here
 

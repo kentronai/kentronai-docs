@@ -3,7 +3,7 @@ title: "Connecting providers from the CLI"
 description: "Authorize a provider from the terminal with receipt connect, inspect and remove connections, and use the automation surface that reuses your saved session or an environment token."
 ---
 
-`receipt connect <provider>` authorizes a provider in your browser and stores the connection in the workspace your CLI session is bound to. Signing in always lands you in your organization's **Default** workspace; after [`receipt workspace use <name>`](/cli/workspaces) your session carries a token for that workspace instead, and every `connect` command — authorizing, `status`, `disconnect` — then reads and writes there. Connections you made in another workspace stop appearing in `receipt connect status` until you switch back. To place a connection from the browser instead, see [Connect an app](/mcp-gateway/connect-an-app).
+`receipt connect <provider>` authorizes a provider — one of the connectable apps in the catalog, such as GitHub, AWS or Google Drive — in your browser, and stores the resulting connection in the workspace your CLI session is bound to. The credential itself stays on the server; what lands in the workspace is a reference to it. Signing in always lands you in your organization's **Default** workspace; after [`receipt workspace use <name>`](/cli/workspaces) your session carries a token for that workspace instead, and every `connect` command — authorizing, `status`, `disconnect` — then reads and writes there. Connections you made in another workspace stop appearing in `receipt connect status` until you switch back. To place a connection from the browser instead, see [Connect an app](/mcp-gateway/connect-an-app).
 
 `receipt connect status`, `disconnect` and `<provider>` reuse the session saved by [`receipt setup`](/cli/setup); being already signed in means no second browser prompt. If the gateway rejects that saved token (HTTP 401) the CLI signs in once more and retries, rather than failing.
 
@@ -17,9 +17,11 @@ The command reuses your saved session, then creates an authorization session and
 
 ```
 Step 2 of 2: authorize github
-  Open: https://<nango-host>/connect?session_token=...
+  Open: https://<connect-host>/...
   Press Enter to open github authorization...
 ```
+
+The link is minted by the deployment's integration provider and passed through unchanged apart from an `apiURL` parameter Receipt appends, so its exact shape depends on that provider. If no link comes back, the command stops with `Nango did not return a connect link.`
 
 On a TTY it pauses at that prompt before opening your browser. `--yes` or `--auto-open` skips the pause. With browser auto-open disabled it prints `Browser auto-open is disabled; open the URL above to continue.` instead.
 
@@ -56,7 +58,7 @@ Polling matches **any** valid connection for that provider, not specifically the
 | `--no-open` | off | Print the link only, do not open a browser |
 | `--fresh-login` | off | Ignore the saved session and re-run the browser sign-in |
 
-`--wait false` is not a working form of `--no-wait`; use `--no-wait`.
+`--wait=false` is not a working form of `--no-wait`; use `--no-wait`.
 
 A target word or URL may follow the subcommand — `receipt connect status local`, `receipt connect aws dev`, `receipt connect github https://gw.example.com` — alongside the shared `--server-url`, `--auth-url` and `--no-open` flags.
 
@@ -64,9 +66,9 @@ A target word or URL may follow the subcommand — `receipt connect status local
 
 Creating the authorization session requires the `connect:write` scope **and** workspace mutation authority. The refusals you may see:
 
-- `workspace_membership_required` (403) — your token is not allowed to mutate that workspace.
-- `Receipt Connect Nango is not configured...` (503) — the deployment has no integration provider configured.
-- `Unsupported connector. Use one of: aws, gcp, ..., or any integration configured in Nango.` (400) — the provider word is not a known connector id or alias.
+- `workspace_membership_required` (403) — your token is not a member of that workspace, or is a member without authority to mutate it. Mutating needs the workspace `owner` or `admin` role, or organization owner or admin.
+- `Self-hosted Nango is not configured. Set RECEIPT_INTEGRATIONS_URL, RECEIPT_INTEGRATIONS_SECRET_KEY, and RECEIPT_INTEGRATIONS_WEBHOOK_SECRET.` (503) — the deployment has no integration provider configured.
+- `Unsupported connector. Use one of: aws, gcp, ..., or any integration configured in Nango.` (400) — the request named no integration the gateway could resolve. The CLI resolves the connector word before it sends anything, so this one reaches you only from other callers of the API.
 
 An unrecognised provider word fails client-side first, with `unsupported Receipt Connect provider. Use aws, gcp, google-ads, ....`
 
@@ -101,13 +103,13 @@ Picking a number returns the **display label**, lower-cases it, and looks it up 
 unsupported Receipt Connect onboarding choice: Google Cloud
 ```
 
-Use the connector identifier instead: `receipt connect gcp`, or `--provider gcp`. In a non-TTY the menu picks the default, index 1 — AWS.
+Use the connector identifier instead: `receipt connect gcp`, or `--provider gcp`. [The connector catalog](/catalog/connectors) lists the ids. In a non-TTY the menu picks the default, index 1 — AWS.
 </Accordion>
 
 <Accordion title="Every CLI-created connection is named `default`">
 The released CLI sends no connection name, so the server always stores the connection as `default`. There is no `--name` flag on the provider flow.
 
-Named connections such as `aws.prod` exist and are usable — `receipt tools --connection aws:prod`, capability key `aws.prod` — but they are created in the web interface, not from the CLI. See [Connect an app](/mcp-gateway/connect-an-app).
+Named connections such as `aws.prod` exist in the data model and are usable — `receipt tools --connection aws:prod`, capability key `aws.prod` — but nothing in this release lets you choose the name. The browser flow stores `default` too; the one non-default name the product creates is `agent-registry`, from the Agent Registry cloud dialog, and the workspace integrations list hides it. See [Connect an app](/mcp-gateway/connect-an-app).
 </Accordion>
 </AccordionGroup>
 
@@ -154,7 +156,7 @@ Deletion needs `connect:write` and workspace mutation authority. If the integrat
 
 ## The agent surface: `list`, `tools`, `call`
 
-`receipt connect list`, `receipt connect tools` and `receipt connect call` are a separate surface intended for automated callers. On the released binary they also use your saved session, so they work straight after `receipt setup`. When `RECEIPT_CONNECT_TOKEN` and `RECEIPT_CONNECT_GATEWAY_URL` are set, those environment variables take **precedence** over the saved session — the way to give a sandbox or CI job an explicit identity. That is also the one case where these commands and `receipt connect status` can disagree about what is connected: an environment token can be bound to a different workspace than your saved session.
+`receipt connect list`, `receipt connect tools` and `receipt connect call` are a separate surface intended for automated callers. On the released binary they also use your saved session, so they work straight after `receipt setup`. When `RECEIPT_CONNECT_TOKEN` and `RECEIPT_CONNECT_GATEWAY_URL` are set, those environment variables take **precedence** over the saved session — the way to give a sandbox or CI job an explicit identity. Two things make this surface and `receipt connect status` disagree about what is connected: an environment token can be bound to a different workspace than your saved session, and `list` returns only connections that are provider-backed and `valid`, while `status` returns every stored connection with whatever status it has.
 
 Gateway URL comes from `--server-url`, `RECEIPT_CONNECT_GATEWAY_URL` or `RECEIPT_PROXY_SERVER_URL`; the token comes from `RECEIPT_CONNECT_TOKEN`. Signed out with no environment override:
 
@@ -169,9 +171,9 @@ On this surface a saved token is only ever sent to its own gateway host — the 
 | Command | Output |
 | --- | --- |
 | `receipt connect list [--json]` | `Current connections:` with one `<provider>:<name> <status>` line each, or `Current connections: none` |
-| `receipt connect tools <connection>` | `{ok, connection, tools}`, where each tool carries a name, description, `access` of `read` or `write`, and an input schema |
+| `receipt connect tools <connection>` | `{ok, connection, tools}`, where each tool carries a name, an optional description, `access` of `read` or `write`, and an input schema |
 | `receipt connect call <connection> <tool> [--json '{...}']` | `{ok, connection, tool, access, result, artifacts}` |
-| `receipt connect call <connection> --path /x [--query-json '{...}'] [--headers-json '{...}']` | The provider's JSON response |
+| `receipt connect call <connection> --path /x [--query-json '{...}'] [--headers-json '{...}']` | `{ok, connection, status, headers, data}`, where `data` is the provider's response |
 
 ### The two call forms
 
@@ -181,7 +183,7 @@ The named tool form takes a tool name plus `--json '<object>'` for its arguments
 
 The server enforces most of the rules, not the client, so these come back from the gateway:
 
-- `path must be a safe provider-relative absolute path` — no `//`, backslashes, `#`, `.` or `..` segments, encoded slashes or a `/https:` prefix, and at most 4096 characters
+- `path must be a safe provider-relative absolute path` — the path starts with a single `/` and is at most 4096 characters, with no backslash, no `#`, no `.` or `..` segment, no encoded slash, and no `/http:` or `/https:` prefix
 - `body is not allowed on read-only integration calls`
 - `header '<x>' is not allowed`
 - `query '<k>' has an unsupported value`

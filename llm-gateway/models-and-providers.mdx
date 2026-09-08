@@ -4,12 +4,12 @@ description: "Connect a provider account, choose which models a workspace may us
 ---
 
 <Warning>
-**Two of the 32 provider tiles can be configured in this release: OpenAI and Anthropic.** Every other tile opens, but its fields are disabled and **Continue to model selection** never enables, so the wizard stops at its first step. A save call made directly against the server is refused with **"This provider is a catalog preview and cannot be configured yet."** That includes the Self-Hosted Model tile behind the **Custom Endpoints** tab. Read the gallery as a catalog of what the Model Gateway is being built toward, and press **Filter** on the Models tab to see only the tiles that will save.
+**This page's gallery lists 32 model providers, and two of them can be configured in this release: OpenAI and Anthropic.** Every other tile — one tile is one provider — opens, but its fields are disabled and **Continue to model selection** never enables, so the wizard stops at its first step. A save call made directly against the server is refused with **"This provider is a catalog preview and cannot be configured yet."** That includes the Self-Hosted Model tile behind the **Custom Endpoints** tab. Read the gallery as a catalog of what the LLM Gateway is being built toward, and press **Filter** on the Models tab to see only the tiles that will save.
 </Warning>
 
 The **Models** page is where you connect a model provider account, choose which of that provider's models a workspace may use, and decide who can manage the account and who can use it. You reach it from the **Model Gateway** area in the sidebar: its **Models** item opens the Models page in organization settings.
 
-Like the rest of organization settings, the page is owner- and admin-only, and anyone else who opens the URL is returned to the app root with no access-denied screen. Saving an account also requires authority in the active workspace, because a Models account belongs to a workspace rather than to the organization.
+Like the rest of organization settings, the page is owner- and admin-only, and anyone else who opens the URL is returned to the app root with no access-denied screen. Saving an account also requires authority in the active [workspace](/core/organizations-and-workspaces) — the boundary an organization divides its connections, keys and access into — because a Models account belongs to a workspace rather than to the organization.
 
 ## The provider gallery
 
@@ -55,7 +55,7 @@ Three things about the save are worth knowing:
 
 - **Only the API key is sent.** The dialog transmits the account name, the key field, the selected model ids and the two access levels. The region, endpoint, project and token fields on the other tiles are disabled and never leave the browser.
 - **The key is authenticated against the provider before anything is stored.** Its format is checked first, then Receipt makes a live call to the provider's own API. A key the provider rejects never becomes a stored account.
-- **What comes back is secret-free.** The account summary the page works with carries a twelve-character credential fingerprint, not the credential. The key itself is encrypted, and each save appends a hash-chained [receipt](/core/receipts-and-streams) from which the serving row is rebuilt.
+- **What comes back is secret-free.** The account summary the page works with carries a 12-character credential fingerprint, not the credential. The key itself is encrypted, and each save appends a hash-chained [receipt](/core/receipts-and-streams) from which the serving row is rebuilt.
 
 A failed save shows the server's own message, or **"The model selection could not be saved."** when there is none. Two more come from the store: **"Select at least one model."**, and `Model '{id}' cannot execute through {provider}.` when a chosen model cannot route through this provider.
 
@@ -110,7 +110,7 @@ The form is titled with the manufacturer's name and described as **"Enable or di
 </Frame>
 
 <Warning>
-**The model switches mean opposite things on the two policy screens.** Here, a checked switch means the model is **enabled**. In the **Model Controls** section of Provider policy, a checked switch means the model is **disabled**. This is a real inconsistency in the product, not a documentation simplification — read the screen you are on before you flip anything, and confirm the result on the other. See [Model policy](/llm-gateway/model-policy).
+**A checked switch means "enabled" here and "disabled" in the Model Controls section of Provider policy.** Read the screen you are on before you flip anything, and confirm the result on the other. [Model policy](/llm-gateway/model-policy) covers both screens and the convention each one follows.
 </Warning>
 
 ## Custom endpoints
@@ -122,7 +122,7 @@ The second tab is headed **"Custom endpoints"** — "Add an OpenAI-compatible or
 </Frame>
 
 <Warning>
-**Custom endpoints cannot be saved in this release.** Self-Hosted Model is a catalog-preview tile, so its dialog stops at the same disabled first step as the rest. The tab also points outward, not inward: it describes an endpoint Receipt would call as a provider, not a way to route another application's traffic through Receipt. There is no OpenAI-compatible endpoint on the Receipt side — see [Model Gateway overview](/llm-gateway/overview).
+**Custom endpoints cannot be saved in this release.** Self-Hosted Model is a catalog-preview tile, so its dialog stops at the same disabled first step as the rest. The tab also points outward, not inward: it describes an endpoint Receipt would call as a provider, not a way to route another application's traffic through Receipt. There is no OpenAI-compatible endpoint on the Receipt side — see [what the LLM Gateway does](/llm-gateway/overview).
 </Warning>
 
 Next step: [add your organization's own provider key](/llm-gateway/bring-your-own-key).

@@ -60,16 +60,7 @@ openssl rand -base64 32
 
 The other two are shared secrets rather than AES keys: what matters is that the value is long, random, and identical on both sides. The repository's deploy secrets generator produces 48 random bytes, base64url, for each. `RECEIPT_CONNECT_JWT_SECRET` must be the same value in the web app and the runtime, and `RECEIPT_INTEGRATIONS_WEBHOOK_SECRET` must match the HMAC key registered at the integration provider — the provider signs each webhook with it and Receipt verifies against it.
 
-Both AES keys use a 12-byte IV and key version 1. `BYOK_ENCRYPTION_KEY_B64` reports its own problems precisely:
-
-- `Missing required environment variable BYOK_ENCRYPTION_KEY_B64.`
-- `BYOK_ENCRYPTION_KEY_B64 must be valid base64.`
-- `BYOK_ENCRYPTION_KEY_B64 must decode to exactly 32 bytes.`
-- `Unsupported BYOK key version: {n}` when decrypting a row written under a different key version.
-
-`RECEIPT_CONNECTION_ENCRYPTION_KEY_B64` must likewise decode to exactly 32 bytes, and a version mismatch throws `Unsupported Receipt Connect connection key version: <n>`.
-
-A stored provider key is never logged in full. What appears in logs and telemetry is a fingerprint: the first twelve hex characters of its SHA-256.
+Both AES keys use a 12-byte IV and key version 1. `RECEIPT_CONNECTION_ENCRYPTION_KEY_B64` must decode to exactly 32 bytes, and a version mismatch throws `Unsupported Receipt Connect connection key version: <n>`. `BYOK_ENCRYPTION_KEY_B64` reports its own problems in the same shape: [the BYOK wrapping key](/llm-gateway/configuration#the-byok-wrapping-key) lists every message it can produce, and the 12-character fingerprint that stands in for a provider key in logs.
 
 <Note>
 The repository's local supervisor scripts fill in fallbacks when these are unset: `RECEIPT_CONNECTION_ENCRYPTION_KEY_B64` falls back to `BYOK_ENCRYPTION_KEY_B64`, and `RECEIPT_CONNECT_JWT_SECRET` falls back to `BETTER_AUTH_SECRET`. That is a local-development convenience. The deploy secrets bundle lists both as required values in their own right. The two AES `_B64` keys are additionally validated to decode to exactly 32 bytes before upload, and anything else is refused with `<name> must be a base64-encoded 32 byte key.`
@@ -78,9 +69,7 @@ The repository's local supervisor scripts fill in fallbacks when these are unset
 <Warning>
 **Rotating either AES key destroys the data it protects. There is no way back.**
 
-There is no re-encryption routine anywhere in the codebase, and decryption hard-fails on any other key version. Rotating `BYOK_ENCRYPTION_KEY_B64` after organizations have saved provider keys makes every stored key permanently undecryptable — the only recovery is for each organization to re-enter its keys by hand. Rotating `RECEIPT_CONNECTION_ENCRYPTION_KEY_B64` after connections exist does the same to every stored Receipt Connect connection secret.
-
-Generate both keys once, before the first user saves anything, and store them where you will not lose them.
+There is no re-encryption routine anywhere in the codebase, and decryption hard-fails on any other key version: rotating `RECEIPT_CONNECTION_ENCRYPTION_KEY_B64` after connections exist makes every stored Receipt Connect connection secret permanently undecryptable, and `BYOK_ENCRYPTION_KEY_B64` does the same to every saved provider key — [the BYOK wrapping key](/llm-gateway/configuration#the-byok-wrapping-key) has the full account. Generate both keys once, before the first user saves anything, and store them where you will not lose them.
 </Warning>
 
 ## Paying for model calls
@@ -94,7 +83,7 @@ When an organization has no key of its own, the request is funded by the deploym
 | Variable | Default | Effect |
 |---|---|---|
 | `OPENAI_API_KEY` | none | The server-side key that pays for every request no organization key covers. Not declared in either environment template. |
-| `CHAT_REQUIRE_BYOK` | `false` | `true` makes a workspace-managed provider key mandatory: a request without one is refused with 403 instead of falling back to platform funding. |
+| `CHAT_REQUIRE_BYOK` | `false` | `true` makes an organization or workspace provider key mandatory: a request without one is refused with 403 instead of falling back to platform funding. |
 | `ALLOW_USER_COST_DISPLAY` | `false` | Shows AI cost to end users. Requests that used an organization key always show cost regardless. |
 | `FREE_CHAT_RATE_LIMIT_WINDOW_MS` / `_MAX_REQUESTS` | `60000` / `10` | Per-user chat request limit on the free plan |
 | `PAID_CHAT_RATE_LIMIT_WINDOW_MS` / `_MAX_REQUESTS` | `60000` / `30` | Per-user chat request limit on a paid plan |
@@ -109,7 +98,7 @@ Because the variable is in neither template, this is the single most common conf
 </Warning>
 
 <Warning>
-`VITE_DISABLE_REDIS=true` turns the rate limiter off entirely — see [Redis](#redis) below. The template ships that value.
+`VITE_DISABLE_REDIS=true` turns the rate limiter off entirely — see [Redis](#redis) below. The cloud template (`apps/start/.env.example`) ships that value; the self-hosted template ships `VITE_DISABLE_REDIS=false`, so on a self-hosted install the limiter is on and `REDIS_URL` is required.
 </Warning>
 
 ## Seats on the free plan
@@ -169,7 +158,7 @@ The proxy rejects a bad key with `{"error":"Invalid storage key"}` (400) and a b
 
 ### Embeddings and the vector store
 
-`VITE_ENABLE_EMBEDDING` **defaults to `true`** when unset. So a vector store is required unless you explicitly turn embeddings off.
+`VITE_ENABLE_EMBEDDING` **defaults to `true`** when unset, so the stack expects a vector store unless you explicitly turn embeddings off. The cloud template ships `true`; the self-hosted template ships `false`.
 
 - To run embeddings: set `QDRANT_URL` and, if your instance needs it, `QDRANT_API_KEY`. `QDRANT_COLLECTION_ATTACHMENTS` defaults to `attachment_chunks_v1`, `QDRANT_TIMEOUT_MS` to `5000`, `QDRANT_UPSERT_BATCH_SIZE` to `128`.
 - To run without one: set `VITE_ENABLE_EMBEDDING=false` at build time, which disables embeddings and vector retrieval globally.
@@ -335,8 +324,8 @@ The sections above cover the variables that stop the product working. This appen
 |---|---|---|
 | `OPENAI_BASE_URL`, `OPENAI_API_BASE` | | Redirect the agent's OpenAI traffic to another endpoint, including the offline mock proxy |
 | `MOCK_OPENAI_API_KEY` | `mock-openai-key` | Stand-in key, supplied only when `OPENAI_BASE_URL` is a loopback address, so the mock path cannot degrade into process-wide credentials |
-| `OPENAI_TIMEOUT_MS`, `OPENAI_STRUCTURED_TIMEOUT_MS`, `RECEIPT_STRUCTURED_TIMEOUT_MS` | | Request timeouts |
-| `OPENAI_ORGANIZATION`, `OPENAI_ORG_ID`, `OPENAI_PROJECT` | | Passed to the OpenAI client |
+| `RECEIPT_STRUCTURED_TIMEOUT_MS`, `OPENAI_STRUCTURED_TIMEOUT_MS`, `OPENAI_TIMEOUT_MS` | `60000` | Structured-output request timeout, read in that order of precedence |
+| `OPENAI_ORGANIZATION`, `OPENAI_ORG_ID`, `OPENAI_PROJECT` | | Forwarded into the sandbox environment for the agent. The runtime's own OpenAI client does not read them. |
 | `RECEIPT_FACTORY_CHAT_MODEL`, `RECEIPT_FACTORY_SUPERVISOR_MODEL`, `RECEIPT_FACTORY_PLATFORM_CODEX_MODEL`, `RECEIPT_FACTORY_PLATFORM_SUPERVISOR_MODEL` | in code | Further Factory model selection |
 | `CHAT_TITLE_GENERATION_MODEL` | in code | Model used to name a conversation. The template's comment claiming it follows the thread model is stale. |
 | `CHAT_RECEIPT_RECAP_MODEL`, `RECEIPT_CHAT_CHAIN_TIMEOUT_MS`, `RECEIPT_APP_CHAT_PROFILE_ID`, `RECEIPT_FACTORY_CHAT_PROFILE_ID` | | Chat tuning |
@@ -380,7 +369,7 @@ The sections above cover the variables that stop the product working. This appen
 
 <Accordion title="Routing between processes">
 
-The service gateway fronts every process behind one origin and routes by path prefix: `/runtime`, `/zero`, `/integrations`, `/integrations-connect`, `/connect`, `/slack`, `/teams`, `/resonate`, `/computer`. Everything else goes to the web app. The prefixes are the same locally and in a cloud deployment.
+The service gateway fronts every process behind one origin and routes by path prefix: `/runtime`, `/zero`, `/integrations`, `/integrations-connect`, `/connect`, `/slack`, `/teams`, `/resonate`, `/computer`. Everything else goes to the web app. The prefixes are the same locally and in a cloud deployment; [Processes, roles, and routing](/core/architecture) has the full table, including each service's internal port, exposure and health path.
 
 Backend targets are `RECEIPT_WEB_INTERNAL_URL`, `RECEIPT_RUNTIME_INTERNAL_URL`, `RECEIPT_ZERO_INTERNAL_URL`, `RECEIPT_INTEGRATIONS_INTERNAL_URL`, `RECEIPT_INTEGRATIONS_CONNECT_INTERNAL_URL`, `RECEIPT_SLACK_INTERNAL_URL`, `RECEIPT_TEAMS_INTERNAL_URL`, `RECEIPT_RESONATE_INTERNAL_URL`, `RECEIPT_COMPUTER_INTERNAL_URL` and `RECEIPT_OPENSANDBOX_INTERNAL_URL`. Public origins are `RECEIPT_SERVICE_GATEWAY_URL`, `RECEIPT_SERVICE_RUNTIME_URL`, `RECEIPT_PROXY_SERVER_URL`, `RECEIPT_SERVER_URL`, `RECEIPT_RUNTIME_URL`, `RECEIPT_APP_URL`, `RECEIPT_WEB_URL` and `RECEIPT_PUBLIC_BASE_URL`.
 

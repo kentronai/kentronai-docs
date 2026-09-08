@@ -30,7 +30,7 @@ organization + workspace + provider + name  ->  integration id + connection id
 That reference lives in the `org_connection_secret` table, encrypted with AES-256-GCM under a key from `RECEIPT_CONNECTION_ENCRYPTION_KEY_B64`. The browser never sees the encrypted payload: replication carries only the connection's id, organization, workspace, provider, name, kind, status, expiry, last-validated time and timestamps, and only to a reader who is a member of that workspace — so the provider's own integration and connection ids stay server-side. For the cipher and the full column allowlist, see [the security model](/mcp-gateway/security-model).
 
 <Warning>
-This describes **Receipt Connect integrations** — the connectors in the catalog. The Slack and Microsoft Teams apps install through their own flows rather than through Receipt Connect, so do not carry this storage claim across to them.
+This describes **Receipt Connect connectors** — the entries in the catalog. The Slack and Microsoft Teams apps install through their own flows rather than through Receipt Connect, so do not carry this storage claim across to them.
 </Warning>
 
 ### The two cases where Receipt does hold a credential

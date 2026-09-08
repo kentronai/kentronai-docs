@@ -31,7 +31,7 @@
         "tab": "MCP Gateway",
         "icon": "plug",
         "groups": [
-          { "group": "Get started", "pages": ["mcp-gateway/overview", "mcp-gateway/quickstart", "mcp-gateway/connect-an-app"] },
+          { "group": "Get started", "pages": ["mcp-gateway/overview", "mcp-gateway/connect-an-app", "mcp-gateway/quickstart"] },
           { "group": "Concepts", "pages": ["mcp-gateway/workspaces", "mcp-gateway/connection-scopes", "mcp-gateway/receipt-connect"] },
           { "group": "Tools and permissions", "pages": ["mcp-gateway/tools-and-permissions", "mcp-gateway/aggregate-server"] },
           { "group": "Operate", "pages": ["mcp-gateway/gateway-activity", "mcp-gateway/security-model", "mcp-gateway/troubleshooting"] }

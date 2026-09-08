@@ -1,11 +1,11 @@
 ---
 title: "What the AI Co-Worker does"
-description: "Give Receipt a goal in plain language; it answers directly or plans, executes and reports back, and every step of a background run is recorded as a receipt you can replay."
+description: "How Receipt handles a goal you give it in plain language, from a direct answer to a background run whose every step is recorded as a receipt you can replay."
 ---
 
 Receipt is the AI co-worker in Kentron. You give it a goal in plain language, in the web chat, in Slack or in Teams, and it either answers straight away or plans and executes the work in the background across the apps your organization has connected, then reports back in the same thread. Every step of a background run is recorded as a hash-chained receipt you can replay afterwards.
 
-<Frame caption="A new chat. The composer has a + menu and a Skills chip, and its placeholder cycles through example goals. The sidebar shows recent chats, Slack, MCP Gateway, Model Gateway and Agents, then the areas only an owner or admin sees — Integrations, BYOK, Org Brain, Skills, Guardrails and Policies — with the Beetle runners counter in the footer.">
+<Frame caption="A new chat. The composer has a + menu and a Skills chip, and its placeholder cycles through example goals. The sidebar shows recent chats, Slack, MCP Gateway, Model Gateway and Agents, then the areas only an owner or admin sees — Integrations, BYOK, Org Brain, Skills, Guardrails and Policies — with the Beetle runners counter in the footer. The recent-chat list under Chat is a scroll area, so its last row is clipped at the bottom edge.">
   <img src="/images/co-worker/chat-home.png" alt="The empty Receipt chat screen greeting a user with Hello, Alex and asking What would you like to explore, above a composer whose placeholder reads Ask Receipt to triage open Jira tickets by priority and owner." />
 </Frame>
 
@@ -46,7 +46,7 @@ Every message first goes through a routing step that returns one decision and do
 
 1. **Answer directly.** Chosen when your message can be answered from the visible conversation and what Receipt knows about your connections. The reply is streamed into the thread with no tools attached.
 2. **Draft or save a skill.** Chosen when you ask for a brand-new organization skill. A draft appears in the thread; it is saved only when you explicitly ask, and saving needs an owner or admin. Web chat only.
-3. **Run in the background.** Chosen when the answer "requires current private, local, repository, terminal, connected-account, or other external evidence". Naming an app is not enough; a question about a public API is still a direct answer. The thread shows `Beetle queued job <jobId>.` (Beetle is the assistant's name in the interface), then progress lines, then the result. Read-only work runs as an *investigation*; anything that creates, updates or deletes, edits code or configuration, deploys, opens a pull request or produces a downloadable file runs as a *delivery*.
+3. **Run in the background.** Chosen when the answer "requires current private, local, repository, terminal, connected-account, or other external evidence". Naming an app is not enough; a question about a public API is still a direct answer. The thread shows `Beetle queued job <jobId>.` ([Beetle](/introduction) is the interface's name for the assistant), then progress lines, then the result. Read-only work runs as an *investigation*; anything that creates, updates or deletes, edits code or configuration, deploys, opens a pull request or produces a downloadable file runs as a *delivery*.
 
 If routing cannot settle on a decision it asks once more, then stops without queuing anything. Web chat replies `Beetle stopped before completing this response.` with `Reason: Receipt couldn't determine the access needed for this request. Please retry; no task was started.`; Slack posts that sentence on its own. Teams is the exception and falls back to a background run; see [Receipt in Teams](/co-worker/teams). The routing step and the gates around it are described in full on [how it works](/co-worker/how-it-works).
 
@@ -64,7 +64,7 @@ That list is the whole gate. A background run is granted write access whenever i
 
 | Limit | What it means |
 |---|---|
-| Model | No model or reasoning picker. Every chat uses your organization's default OpenAI-routed model; the `+` menu offers Study Mode and, when the model has a larger window, Max, but no model choice. Study Mode pins a model this release cannot execute, so a turn sent in it ends in an error rather than an answer; see [your first chat](/co-worker/your-first-chat). |
+| Model | No model or reasoning picker. Every chat uses your organization's default OpenAI-routed model; the `+` menu offers Study Mode (a study system prompt on one fixed model, with provider tools switched off) and, when the model has a larger context window, Max, but no model choice. The model Study Mode pins has no route this release can execute, so a turn sent in it ends in an error rather than an answer; see [your first chat](/co-worker/your-first-chat). |
 | Tools checkboxes | The Tools entries in the `+` menu record a preference but do not change what runs: direct answers attach no provider tools, and background runs do not read them. |
 | Connected apps | 63 connectable apps, inside a browsable directory of about 900. A run is scoped to the apps the routing step selects; it never selects every connected app as a fallback. |
 | Channels | Slack must be installed by an organization owner or admin. Both channels need an organization OpenAI key before a mention can be routed, and Teams posts no progress updates. |

@@ -13,11 +13,11 @@ Connect a cloud account and Receipt scans it for AI agents and for the workloads
 
 **Agents → Registry** in the sidebar. The page is headed **Agent Registry**, "Discover cloud AI agents, classify autonomy, and review organization risk.", and has two tabs, **Inventory** and **Dashboard**. The open tab is part of the URL, so a refresh or a shared link comes back to the same view, and older bookmarks to the standalone dashboard land on the Dashboard tab. A crash inside the area leaves the rest of the app standing and shows **"Agent Registry couldn't load."** with the error and a **Try again** button.
 
-<Frame caption="The Inventory tab after one AWS scan. Both discovered EC2 workloads are classified L4 and Critical because no owner could be resolved, and the line above the table records the last scan.">
-  <img src="/images/catalog/agent-registry-inventory.png" alt="The Agent Registry inventory table listing two AWS EC2 agent workloads with autonomy level L4, critical risk and an Unowned owner column." />
+<Frame caption="The Inventory tab after one AWS scan, captured wide enough to show every column. Both discovered EC2 workloads are classified L4 — the highest of the four autonomy levels, defined below — and Critical because no owner could be resolved, so Owner reads Unowned; Credential reads IAM role, Last used carries the timestamp the provider reported, and Actions is the row menu. The line above the table records the last scan.">
+  <img src="/images/catalog/agent-registry-inventory.png" alt="The Agent Registry inventory table listing two AWS EC2 agent workloads, ops-assistant-host and support-triage-agent, each with autonomy level L4, Critical risk, an Unowned owner, an IAM role credential, a September 2026 last-used date and a row menu in the Actions column." />
 </Frame>
 
-The columns are a row number, **Agent** (provider badge, name, and `AWS · us-east-1` underneath), **Platform**, **Function**, **Level**, **Risk**, **Owner**, **Credential**, **Last used** and **Actions**. Clicking an agent — or **View details** in its row menu — opens the register entry. **Search agents** matches name, resource id, platform, function, owner and region; the **Autonomy** button filters by level; the table pages client-side at 10, 25, 50 or 100 rows. Above it, `Showing 2 of 2 agents` sits opposite `Last scan: AWS · completed · 7 Sept 2026, 19:32`, which reads **"No scans yet"** before the first scan and carries a warning triangle when the last one failed. Every timestamp on this page is rendered in UTC, with the date written the way your browser's locale writes it.
+The columns are a row number, **Agent** (provider badge, name, and `AWS · us-east-1` underneath), **Platform**, **Function**, **Level**, **Risk**, **Owner**, **Credential**, **Last used** and **Actions**. Clicking an agent — or **View details** in its row menu — opens that agent's register entry, the read-only detail dialog described below. **Search agents** matches name, resource id, platform, function, owner and region; the **Autonomy** button filters by level (L1 to L4, defined below); the table pages client-side at 10, 25, 50 or 100 rows. Above it, `Showing 2 of 2 agents` sits opposite `Last scan: AWS · completed · 8 Sept 2026, 08:13`, which reads **"No scans yet"** before the first scan and carries a warning triangle when the last one failed. Every timestamp on this page is rendered in UTC, with the date written the way your browser's locale writes it.
 
 An empty table reads **"No agents discovered yet. Connect a cloud account and scan its inventory."**, or **"No agents match this search and filter."** when a search or filter is active.
 
@@ -28,7 +28,7 @@ An empty table reads **"No agents discovered yet. Connect a cloud account and sc
 Press **Integrations** in the page header. The dialog is titled **Cloud integrations** — "Connect AWS, Azure, or Google Cloud, then scan the account for AI agents and agent-like workloads." Each provider card shows **"1 connection"**, **"3 connections"**, **"Reconnect required"** or **"Not connected"**.
 </Step>
 <Step title="Connect the provider">
-**Connect** opens the provider's credential form inside the dialog, under the line "Credentials are collected and stored by Nango. Receipt keeps only the connection reference."
+**Connect** opens the provider's credential form inside the dialog, under the line "Credentials are collected and stored by Nango. Receipt keeps only the connection reference." Nango is the integration provider that holds every connection's credentials on Receipt's behalf, so what Receipt stores is a pointer, not your keys.
 </Step>
 <Step title="Let the first scan run">
 On success you get `AWS connected.` and an immediate scan: `AWS scan completed: 4 agents found.`, or `AWS scan completed: 0 agents found. Check the connected account's permissions and region if agents are deployed there.` A connection that works but cannot read anything reports `AWS connected, but inventory scanning needs attention: <error>` — connecting and discovering are separate outcomes, and a failing scan never invalidates a good connection.
@@ -40,7 +40,7 @@ On success you get `AWS connected.` and an immediate scan: `AWS scan completed: 
 </Frame>
 
 <Info>
-The registry uses its own connection, named `agent-registry`. Connecting AWS here never reuses, and is never reused by, the connection on [Global Integrations](/catalog/connectors), which hides `agent-registry` connections from its list — connecting a cloud there is a different act with a different purpose, publishing read tools to chat and MCP clients. See [Receipt Connect](/mcp-gateway/receipt-connect) for how connections and scopes work.
+The registry uses its own connection, named `agent-registry`. Connecting AWS here never reuses, and is never reused by, the connection on [Global Integrations](/catalog/connectors), which hides `agent-registry` connections from its list — connecting a cloud there is a different act with a different purpose, publishing read tools to chat and MCP clients. See [Receipt Connect](/mcp-gateway/receipt-connect) for how a connection is stored and addressed, and [connection scopes](/mcp-gateway/connection-scopes) for where one lives.
 </Info>
 
 | Provider | Credential you supply | What one scan covers |
@@ -228,11 +228,11 @@ The exception is a role the scan could not reach at all — an EC2 instance whos
 
 ## The Dashboard tab
 
-<Frame caption="The Dashboard tab, computed from the whole inventory rather than the Inventory tab's current search and filter. Every bar shows a count and a share of the total.">
+<Frame caption="The Dashboard tab, computed from the whole inventory rather than the Inventory tab's current search and filter. Every bar shows a count and a share of the total. The autonomy bars read L4 Autonomous, L3 Approval, L2 Advise and L1 Observe, against the Assisted, Supervised, Delegated and Autonomous names in the Autonomy filter above — the same four levels under two vocabularies, as the note above records. The counts agree: 2 at L4, 0 at every other level.">
   <img src="/images/catalog/agent-registry-dashboard.png" alt="Agent Registry dashboard with count tiles for total agents discovered, critical risk, high risk, agents with no owner and dormant agents, plus distribution bars for autonomy level, ownership status and credential types." />
 </Frame>
 
-Five counts — **Total agents discovered**, **Critical risk**, **High risk**, **Agents with no owner**, **Dormant (30+ days)** — and three distributions: **Agent distribution by autonomy level**, **Ownership status**, and **Credential types**, each row reading `2 · 100%`. The credential label is a constant per provider rather than a per-agent observation: `IAM role` for AWS, `OAuth token` for Google Cloud, `Service principal` for Azure, and `No instance profile` for an EC2 instance without one. Before the first scan the tab reads **"Connect a cloud account and scan it to build the executive risk dashboard."** There are no trends and no per-provider breakdown.
+Five counts — **Total agents discovered**, **Critical risk**, **High risk**, **Agents with no owner**, **Dormant (30+ days)** — and three distributions: **Agent distribution by autonomy level**, **Ownership status**, and **Credential types**, each row reading a count and a share of the total, such as `2 · 100%` or `0 · 0%`. The credential label is a constant per provider rather than a per-agent observation: `IAM role` for AWS, `OAuth token` for Google Cloud, `Service principal` for Azure, and `No instance profile` for an EC2 instance without one. Before the first scan the tab reads **"Connect a cloud account and scan it to build the executive risk dashboard."** There are no trends and no per-provider breakdown.
 
 ## Scans, receipts and limits
 

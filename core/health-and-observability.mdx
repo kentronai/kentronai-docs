@@ -22,9 +22,9 @@ The runtime's own prefix, the durable-execution broker and the sandbox controlle
 
 Both runtime endpoints run the same check — open a connection to Postgres with a five-second timeout and issue `SELECT 1` — and then report it differently.
 
-`GET /healthz` returns `200` whatever that check said. It carries `ok`, `ready`, `degraded`, `uptimeSec`, `dataDir`, `processRole`, a `queue` snapshot (`version`, `total` and counts for `queued`, `leased`, `running`, `completed`, `failed` and `canceled`), `postgres`, `codexBin` and `resonateUrl`. The comment in the handler states the intent: `Health is a liveness surface, not a replay boundary.` It is deliberately bounded so that slow queue repair or receipt replay cannot make a healthy runtime look down.
+`GET /healthz` returns `200` whatever that check said, and reports the answer only inside its body, alongside a cached queue snapshot and the process role. The comment in the handler states the intent: `Health is a liveness surface, not a replay boundary.` It is deliberately bounded so that slow queue repair or receipt replay cannot make a healthy runtime look down.
 
-`GET /readyz` returns `200` or `503` from the same check, with a smaller body: `ok`, `ready`, `degraded`, `uptimeSec`, `processRole` and `postgres`. The `postgres` object carries `ok` and a `target` naming the host, database, user and `sslmode` it tried, plus an `error` holding the connection message when it failed — enough to tell a wrong host from a wrong password without printing either.
+`GET /readyz` returns `200` or `503` from the same check, with a smaller body. Both bodies carry a `postgres` object holding `ok` and a `target` naming the host, database, user and `sslmode` the runtime tried, plus an `error` with the connection message when it failed — enough to tell a wrong host from a wrong password without printing either. [The runtime API reference](/core/runtime-api#health-and-readiness) lists every field of both payloads.
 
 <Warning>
 **Point your load balancer at `/readyz`.** `/healthz` answers `200` before the runtime can serve a request, so a probe on it will send traffic to a process that cannot reach its database. The container healthcheck shipped in the single-host compose file uses `/healthz`; treat that one as a restart trigger, not a traffic gate.

@@ -3,14 +3,14 @@ title: "Model policy"
 description: "Turn manufacturers and individual models on or off for your organization, set the three compliance flags, and read what each control actually enforces."
 ---
 
-Model policy decides which of the catalog's models your organization is allowed to use. You can switch off a whole manufacturer, override that denial for a single model, and set three compliance flags. Every chat turn resolves its model through that policy before a provider is called, and a denial is an HTTP 403 the user sees in the thread.
+Model policy decides which models from the [model catalog](/llm-gateway/models-and-providers) — the list of models Receipt knows about — your organization is allowed to use. You can switch off a whole manufacturer, override that denial for a single model, and set three compliance flags. Every chat turn resolves its model through that policy before a provider is called, and a denial is an HTTP 403 the user sees in the thread.
 
 <Warning>
 **Two of the three compliance flags do not behave the way their labels read.**
 
 **"Require organization provider key"** is not enforced on the request path. The toggle persists, but no server-side check reads it: the only reader is a client-side filter over the model list in the composer, and the model picker that list feeds is not mounted in this release. No request is refused because the flag is on.
 
-**"Enforce Study Mode"** is enforced, and that is the problem. It pins every chat request to `openai/gpt-oss-120b`, a catalog row whose only routes are `azure` and `gateway` — neither is executable at this release. The first model call of a turn is the chat router, so by code reading the turn fails there: the router retries once, then the thread shows **"Beetle stopped before completing this response."** with the reason **"Receipt couldn't determine the access needed for this request. Please retry; no task was started."** No test covers the combination. Verify it against your own deployment before you enable it.
+**"Enforce Study Mode"** is enforced, and that is the problem. It pins every chat request to `openai/gpt-oss-120b`, a catalog row that can only be executed through `azure` or `gateway`, and Receipt has a runtime adapter for neither. The same model is pinned when anyone turns Study Mode on for a thread from the composer's `+` menu, so this is not only an organization-level risk. The first model call of a turn is the chat router, so by code reading the turn fails there: the router retries once, then the thread shows **"Beetle stopped before completing this response."** — Beetle is the assistant's name in the interface — with the reason **"Receipt couldn't determine the access needed for this request. Please retry; no task was started."** No test covers the combination. Verify it against your own deployment before you enable it.
 </Warning>
 
 ## Where the controls live
@@ -50,7 +50,7 @@ Scope this flag precisely when you describe it to anyone. It restricts which mod
 
 ### Enforce Study Mode
 
-An organization-enforced mode wins over both the request's mode and the thread's mode. Study Mode pins the model to `openai/gpt-oss-120b`, injects its own study-assistant system prompt, and empties the provider-native tool allowlists for `openai`, `anthropic`, `google` and `xai`. In the composer's `+` menu, the **Study Mode** checkbox becomes disabled and its tooltip changes to **"Study Mode is enforced by your organization"**.
+An organization-enforced mode wins over both the request's mode and the thread's mode. Study Mode pins the model to `openai/gpt-oss-120b`, injects its own study-assistant system prompt, and empties the provider-native tool allowlists for `openai`, `anthropic`, `google` and `xai`. Without the flag, Study Mode is a per-thread choice: a **Study Mode** checkbox in the composer's `+` menu, whose tooltip reads **"Enable Study Mode"**. With the flag on, that checkbox becomes disabled and its tooltip changes to **"Study Mode is enforced by your organization"**.
 
 The enforcement works. The pinned model is the problem — see the callout at the top of this page.
 
@@ -68,11 +68,7 @@ The **Providers** toggles on the same page follow the first convention: checked 
 
 ## Strict mode: `CHAT_REQUIRE_BYOK`
 
-`CHAT_REQUIRE_BYOK` is the one hard "a provider key is required" gate, and it is an environment variable rather than a screen. Its own description reads: "Optional strict mode. Set true only when every model request must use a workspace-managed provider key instead of the platform-credit gateway." It ships as `false`.
-
-With it on, a request that would otherwise fall back to platform credit is refused instead. Three extra denial reasons become possible: `policy_denied:missing_org_context_for_provider_key` when the request carries no organization, `policy_denied:provider_not_supported_by_byok:{providerId}` when the resolved route is not one of the two providers a key can execute, and `policy_denied:missing_provider_api_key:{providerId}` when it is but no key is stored.
-
-See [Configuration](/llm-gateway/configuration) for the rest of the gateway's variables.
+The one hard "a provider key is required" gate is not on either of these screens. It is the environment variable `CHAT_REQUIRE_BYOK`, which ships as `false`; with it on, a request that would otherwise fall back to platform credit is refused instead, with three denial reasons that cannot otherwise occur. [Bring your own key](/llm-gateway/bring-your-own-key) lists those reasons, and [Gateway configuration](/llm-gateway/configuration) covers the variable and the rest of the gateway's settings.
 
 ## What a denial looks like
 
@@ -86,7 +82,7 @@ Every model-policy denial returns HTTP **403** and is not retryable. The reasons
 | `unknown_model` | The requested model id is not in the catalog. |
 | `no_model_selected` | Nothing supplied a model — no enforced mode, no request model, no thread model. |
 
-The strict-mode reasons above are the exception: any reason containing `missing_provider_api_key` is shown as **"This provider requires an organization API key, but no key is configured."** instead.
+Strict mode adds three more reasons, and the one containing `missing_provider_api_key` is shown as **"This provider requires an organization API key, but no key is configured."** instead. [Gateway configuration](/llm-gateway/configuration) has the complete reason table and the envelope a denial returns.
 
 For the full set of chat error strings and what to do about each, see [Errors and limits](/co-worker/errors-and-limits).
 
@@ -98,4 +94,4 @@ Two write paths reach that row. The settings UI uses sync mutators whose server 
 
 The deny lists and flags are evaluated when a chat turn — and the background title generation that follows it — resolves its model. Background Factory runs resolve their own model and funding on a separate, OpenAI-only path and are not filtered by these lists.
 
-Next step: [see what those model calls cost](/llm-gateway/usage-and-spend)
+Next step: [see what those model calls cost](/llm-gateway/usage-and-spend).

@@ -3,7 +3,7 @@ title: "Reading receipts and driving jobs"
 description: "Resolve a run to a stream, read and fork its receipt chain, audit every chain for integrity, and operate the job queue, memory and session search from a checkout."
 ---
 
-From a checkout you can read any run's receipt chain end to end, branch it at a chosen point, audit every chain in the database for integrity, and drive the work queue directly — enqueue a job, wait for it, steer it, follow up on it, abort it. The same commands reach agent memory and full-text search over past chat sessions.
+From a checkout you can read any run's [receipt chain](/core/receipts-and-streams) — the ordered, hash-linked record of everything that happened in it — end to end, branch it at a chosen point, audit every chain in the database for integrity, and drive the work queue directly — enqueue a job, wait for it, steer it, follow up on it, abort it. The same commands reach agent memory and full-text search over past chat sessions.
 
 All of them belong to the [developer CLI](/cli/from-source/overview). None of the commands on this page exists in the released binary.
 
@@ -73,6 +73,7 @@ receipt fork <run-id|stream> --at <index> [--name <branch-stream>]
 Writes branch metadata pointing at a position in an existing chain.
 
 - `--at` is required (`--at is required`) and must be a finite, non-negative number (`--at must be a non-negative number`). It is floored.
+- `--at` past the end of the chain is rejected by the runtime with `Cannot fork <stream> at <n>; valid range is 0..<length>`.
 - `--name` defaults to `<stream>/branches/fork_<base36 timestamp>_<index>`.
 
 It prints `{ "ok": true, "stream": "…", "at": <n>, "branch": "…" }`.
@@ -85,7 +86,7 @@ receipt dst [<prefix>] [--prefix <prefix>] [--context] [--json] [--limit <n>] [-
 
 `receipt simulate` is an undocumented alias for the same command.
 
-It walks every stream in the data directory — optionally narrowed to those matching a prefix, given positionally or with `--prefix` — and audits each one for three things: chain **integrity**, **replay**, and **determinism**. `--context` additionally audits Factory worker packets.
+It walks every stream in the receipt store — optionally narrowed to those whose name starts with a prefix, given positionally or with `--prefix` — and audits each one for three things: chain **integrity**, **replay**, and **determinism**. `--context` additionally audits the Factory task context packets (manifest, context pack, prompt, memory script).
 
 The report counts streams by kind. The kinds it recognises are:
 
@@ -125,7 +126,9 @@ That message goes to standard error and the process exits `1`. `--strict` is the
 receipt jobs <list|enqueue|wait|steer|follow-up|abort> …
 ```
 
-`list` is also the default when you give no subcommand. Anything unrecognised throws `Unknown jobs subcommand '<x>'`. Every subcommand here needs both Postgres and a reachable Resonate server.
+`list` is also the default when you give no subcommand. Anything unrecognised throws `Unknown jobs subcommand '<x>'`.
+
+Every subcommand reads and writes the job queue in Postgres, so all of them work with no Resonate server running. Only `enqueue` also asks Resonate to dispatch the new job, and that request is fire-and-forget: with no broker reachable the job is still recorded as `queued`, the command still succeeds, and nothing starts the work. Every `jobs` and `abort` call opens a Resonate poll connection regardless, so with the broker down each one also prints a `Resonate poll disconnected; retrying` warning to standard error.
 
 ### `receipt jobs list`
 
@@ -142,10 +145,10 @@ receipt jobs enqueue <agent-id> [--lane chat|collect|steer|follow_up] [--payload
   [--job-id <id>] [--max-attempts <n>] [--session-key <key>] [--singleton-mode allow|cancel|steer]
 ```
 
-A missing agent id throws `agent id is required`. `--payload-json` must parse as a JSON object and defaults to `{}`. Output is `{ "ok": true, "job": { … } }`.
+A missing agent id throws `agent id is required`. `--payload-json` defaults to `{}` and must parse as a JSON object: valid JSON that is not an object throws `--payload-json must be a JSON object`, and text that is not JSON at all surfaces the parser's own `JSON Parse error: …`. `--max-attempts` defaults to `2` and the backend clamps it to 1…8; a non-numeric value throws `--max-attempts must be a number` before anything is enqueued. Output is `{ "ok": true, "job": { … } }`.
 
 <Warning>
-An invalid `--lane` or `--singleton-mode` value is **silently dropped** rather than rejected. The command then enqueues with the backend defaults — lane `collect`, singleton mode `allow`, and `2` attempts clamped to 1…8 — so a typo produces a job that runs on the wrong lane with no error. Check the returned job object rather than assuming your flag took effect.
+An invalid `--lane` or `--singleton-mode` value is **silently dropped** rather than rejected. The command then enqueues with the backend defaults — lane `collect` and singleton mode `allow` — so a typo produces a job that runs on the wrong lane with no error. Check the returned job object rather than assuming your flag took effect.
 </Warning>
 
 ### `receipt jobs wait`
@@ -245,8 +248,9 @@ receipt sessions read <chat-id|session-stream> [--limit <n>] [--output-file <pat
 | `trace`, `replay`, `inspect`, `fork`, `dst` / `simulate` | Postgres, via `ZERO_UPSTREAM_DB` |
 | `sessions` | Postgres |
 | `memory`, `memory prefs` | Postgres, plus an actor identity from flags or a saved session |
-| `jobs`, `abort` | Postgres **and** a reachable Resonate server |
-| `login`, `logout`, `whoami`, `setup`, `connect`, `workspace`, `tools`, `mcp` | Network and a reachable gateway. No Postgres. |
+| `jobs`, `abort` | Postgres. A reachable Resonate server only to dispatch what `enqueue` records. |
+| `setup`, `login`, `connect`, `workspace`, `tools`, `mcp` | Network and a reachable gateway. No Postgres. |
+| `whoami`, `logout` | Nothing but the local session file. No network, no Postgres. |
 
 Without a Postgres connection string the failure is:
 
@@ -255,12 +259,12 @@ Receipt Postgres storage requires ZERO_UPSTREAM_DB.
 ```
 
 <Warning>
-Every command on this page loads the CLI runtime module at **import time**, before the handler for your command runs. Two configuration problems therefore fail the command with an error that never mentions the command you typed:
+Every developer CLI command loads the runtime module at **import time**, before the handler for your command runs — and before the arguments are even dispatched, so `receipt help` and `receipt whoami` fail exactly like `receipt trace`. Two configuration problems therefore fail the command with an error that never mentions the command you typed:
 
 - A `.receipt/config.json` that is not a JSON object throws `Factory config must be a JSON object`.
 - With no config file and no git repository, resolving the runtime throws `Factory runtime config requires a git repository or RECEIPT_REPO_ROOT. cwd=<cwd> failed: git -C <cwd> rev-parse --is-inside-work-tree`.
 
-The connect and session family is the exception — it does not load that module. If `receipt whoami` works but `receipt trace` fails before printing anything, look at your config file and your working directory, not at the stream you asked for.
+If a command fails before printing anything, look at your config file and your working directory, not at the stream or job you asked for. The [`.receipt/bin/receipt` wrapper](/cli/from-source/overview) avoids the second one: it changes to the repository root and exports `RECEIPT_REPO_ROOT` before it starts.
 </Warning>
 
 Next step: [see how Factory turns an objective into tasks](/cli/from-source/factory-overview).

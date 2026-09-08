@@ -20,17 +20,12 @@ bun run receipt:factory board         # from the repository root
 ```
 
 <Note>
-There is one difference between them worth knowing. `receipt factory …` discovers `.receipt/config.json` by walking up from your current directory, so where you stand matters. Bare `receipt` with no arguments in an interactive terminal opens the board against the installed runtime root instead. `--repo-root` or `RECEIPT_REPO_ROOT` pins the location either way.
+There is one difference between them worth knowing. The CLI discovers `.receipt/config.json` by walking up from the working directory, so where you stand matters — except that the `.receipt/bin/receipt` wrapper changes to its own checkout's root and exports `RECEIPT_REPO_ROOT` before it starts, and `bun run receipt:factory` is that same wrapper. So the first and third forms always target the checkout the wrapper lives in, while `bun src/cli.ts factory …` follows your current directory. `--repo-root` or `RECEIPT_REPO_ROOT` pins the location either way.
 </Note>
 
 ### How flags are parsed
 
-- `--flag value` and `--flag=value` both work.
-- A repeated flag becomes an array, which is what makes `--check a --check b` and repeated `--initial-task` accumulate.
-- `--flag` followed by another `--…` token, or by nothing, becomes the boolean `true`.
-- A bare `--` pushes everything after it into positional arguments.
-- There are no short flags other than `-h`, which is treated as a help token.
-- Numeric flags throw `--<key> must be a number` on a non-numeric value, then clamp.
+`receipt factory` uses the developer CLI's own parser, described on [The in-repo developer CLI](/cli/from-source/overview). Two of its rules shape the flags on this page: a repeated flag becomes an array, which is what makes `--check a --check b` and repeated `--initial-task` accumulate, and a numeric flag throws `--<key> must be a number` on a non-numeric value before clamping.
 
 An unrecognised subcommand fails with `Unknown factory subcommand '<x>'`.
 
@@ -39,7 +34,7 @@ An unrecognised subcommand fails with `Unknown factory subcommand '<x>'`.
 | Flag | Applies to | Behaviour and error |
 | --- | --- | --- |
 | `--json` | every subcommand | Machine-readable output. Not uniform — see [JSON switching](#json-switching-and-output-files). |
-| `--output-file <path>` | read commands and every agent command | Writes the payload, creating parent directories, and prints a pointer instead. |
+| `--output-file <path>` | `replay`, `replay-chat`, `analyze`, `parse`, `investigate`, `audit`, `insights`, `doctor` and every agent command | Writes the payload, creating parent directories, and prints a pointer instead. `watch`, `inspect` and `board` ignore it. |
 | `--objective-mode delivery\|investigation` | `run`, `create`, `compose`, `agent start` | Anything else: `--objective-mode must be 'delivery' or 'investigation'` |
 | `--severity 1..5` | same | Non-integer or out of range: `--severity must be an integer between 1 and 5` |
 | `--execution-path computer` | same | Any other value: `--execution-path must be 'computer'` |
@@ -47,7 +42,7 @@ An unrecognised subcommand fails with `Unknown factory subcommand '<x>'`.
 | `--execution-target opensandbox` | same | Sets both the execution path and the computer provider. Any other value: `--execution-target must be one of: opensandbox` |
 | `--required-capability <a,b>` | same | Aliases `--capability` and `--connect`; `--aws` appends `aws`. |
 | `--repo-root <path>` | most commands | Pins the repository root and the config location. |
-| `--data-dir <path>` | `investigate`, `audit`, `insights`, `doctor` **only** | Every other read command uses the `dataDir` from `.receipt/config.json` and ignores this flag. |
+| `--data-dir <path>` | `init`, plus `investigate`, `audit`, `insights` and `doctor` **only** | `init` writes it into the config; those four read commands override the configured value. Every other command uses the `dataDir` from `.receipt/config.json` and ignores this flag. |
 
 `--execution-target` conflicts with the two flags it subsumes:
 
@@ -99,8 +94,8 @@ Without `--force`, an existing file refuses with `Factory config already exists 
 Output:
 
 - `--json` returns `{ok, config, profileSummary, environment}`, where `environment` carries `bunRuntime`, `codexPath`, `codexAvailable`, `openAiReady`, `sourceBranch` and `sourceDirty`. `openAiReady` is hard-coded `false` and tells you nothing.
-- Interactively it prints `Factory config written to <path>`, `Next: bun run factory` and `Create objective: bun run factory run --title "Mission" --prompt "Describe the change"`.
-- Non-interactively it prints `factory config written: <path>`.
+- Interactively and without `--yes`, it prints `Factory config written to <path>`, `Next: bun run factory` and `Create objective: bun run factory run --title "Mission" --prompt "Describe the change"`.
+- Otherwise — non-interactively, or with `--yes` — it prints `factory config written: <path>`.
 
 The `›` glyph becomes `>` when `RECEIPT_FORCE_ASCII=1` or `TERM=dumb`.
 
@@ -121,13 +116,13 @@ receipt factory run [prompt words…] [--prompt <text>|--problem <text>] [--titl
 
 Creates an objective and stays attached to it. The prompt comes from `--prompt`, then `--problem`, then the trailing words; with none of them it fails with `factory run requires --prompt or trailing prompt text`. The title comes from `--title`, otherwise from the prompt's first sentence clipped to 96 characters with `…`.
 
-On a terminal it rewrites a single progress line:
+How it stays attached depends on the terminal. On an interactive terminal — stdin and stdout both TTYs — and without `--json`, `run` opens the board TUI focused on the new objective and leaves when the objective reaches a terminal state. Everywhere else it waits headlessly and reports one progress line:
 
 ```
 [abc123] Collecting evidence · Gathering evidence for the active task. · <detail> · <highlight> · audit running · Next: <next action>
 ```
 
-Off a terminal it prints that line only when it changes, and at least every 10 seconds. It polls every 2000 ms and also wakes on runtime events.
+The bracketed prefix is the last six characters of the objective id, and at most two highlights are shown. When stdout is a terminal the line is rewritten in place; when it is not, the line is printed only when it changes, and at least every 10 seconds. `--json` suppresses the progress line entirely and prints only the closing snapshot. Either way it polls every 2000 ms and also wakes on runtime events.
 
 **Exit codes:**
 
@@ -145,7 +140,7 @@ Off a terminal it prints that line only when it changes, and at least every 10 s
 Exit code 2 is not a failure. It means Factory stopped and is waiting for you — either the objective is blocked on operator guidance, or it is ready and auto-promotion is off, which is [the normal case in a stock checkout](/cli/from-source/factory-overview).
 </Info>
 
-When the objective reaches a terminal status the CLI enqueues an audit job — payload kind `factory.objective.audit`, agent `factory-control`, lane `collect`, session key `factory:audit:<objectiveId>`, singleton mode `steer`, one attempt — and then waits up to 10 seconds for it, unless you passed `--json`. If the terminal receipt snapshot is missing it throws `cannot audit <objectiveId>: terminal receipt snapshot is unavailable`, which is reported as `factory audit enqueue failed after terminal objective: <message>` and does not change the exit code.
+On the headless wait path — not in the TUI — the CLI enqueues an audit job when the objective reaches status `completed`, `failed`, `canceled` or `blocked` and no audit job exists yet: payload kind `factory.objective.audit`, agent `factory-control`, lane `collect`, session key `factory:audit:<objectiveId>`, singleton mode `steer`, one attempt. It then waits up to 10 seconds for that job, unless you passed `--json`. If the terminal receipt snapshot is missing it throws `cannot audit <objectiveId>: terminal receipt snapshot is unavailable`, which is reported as `factory audit enqueue failed after terminal objective: <message>` and does not change the exit code.
 
 ### `receipt factory create`
 
@@ -164,7 +159,7 @@ Two things about `compose` will surprise you.
 
 **The two output modes disagree on the verb.** In the react case the JSON `action` stays `"compose"`, with the prompt in a `note` field, while the text renderer prints `reacted <objectiveId>`. If you are scripting against `action`, do not expect it to say `react`.
 
-**It drops a flag its sibling passes.** `compose` forwards `--execution-path` but not `--computer-provider`. `create` and `agent start` both pass the provider through. If you need the provider set, use `--execution-target`, which sets both, or use `create`.
+**It drops a flag its siblings pass.** `compose` forwards `--execution-path` but not `--computer-provider`. `run`, `create` and `agent start` all pass the provider through. If you need the provider set, use `--execution-target`, which sets both, or use `create`.
 </Warning>
 
 ## Reading an objective
@@ -178,7 +173,7 @@ receipt factory inspect <objective-id> [--panel <name>] [--watch] [--interval-ms
 
 Missing id: `factory watch requires <objective-id>` / `factory inspect requires <objective-id>`.
 
-`watch` prints a one-shot snapshot with `--json` or off a terminal, and opens the TUI focused on that objective on an interactive terminal. `inspect` never opens the TUI. With `--watch` it re-renders on an interval — `--interval-ms`, default 1000, clamped 250 to 60000 — printing only when the rendered output changes, separated by a `---` line in text mode.
+`watch` prints a one-shot snapshot with `--json`, or whenever the session is not an interactive terminal, and opens the TUI focused on that objective otherwise. `inspect` never opens the TUI. With `--watch` it re-renders on an interval — `--interval-ms`, default 1000, clamped 250 to 60000 — printing only when the rendered output changes, separated by a `---` line in text mode.
 
 **Panels.** Exactly nine values are accepted:
 
@@ -237,7 +232,7 @@ The target is optional even though the usage string shows it as required; omitti
 
 Text output opens `# Factory Receipt Investigation` with `## What Happened`, `## Latency` and `## Assessment`. The JSON report carries `requestedId`, `resolved`, `links`, `warnings`, `summary.whatHappened`, `objectiveMode`, `window`, `inputs`, `outputs`, `latency`, `canonicalEvidenceBundle`, `dag`, `packetContext`, `timeline`, `tasks`, `candidates`, `jobs`, `agentRuns`, `anomalies`, `audit`, `recommendations`, `autoFixObjectiveId`, `interventions` and `assessment`.
 
-Warnings you may see: `Persisted objective audit is stale relative to the latest objective update.`, `Audit recommendation generation failed: <error>`, `Invalid canonical evidence bundle at <path>: <error>`.
+Warnings you may see: `Persisted objective audit is stale relative to the latest objective update.`, `Audit recommendation generation failed: <error>` (or `Audit recommendation generation failed.` when no detail was recorded), `Invalid canonical evidence bundle at <path>: <error>`.
 
 ### `receipt factory audit`
 
@@ -275,7 +270,7 @@ These four load `.receipt/config.json` and use its `dataDir`; `--data-dir` does 
 ### JSON switching and output files
 
 <Warning>
-`--json` is not uniform across the subtree. `replay`, `replay-chat`, `analyze` and `parse` also switch to JSON whenever stdout is not a terminal, so piping them gives you JSON even without the flag. `investigate`, `audit`, `insights` and `doctor` stay text when piped. `inspect` formats by `--json` alone.
+`--json` is not uniform across the subtree. `replay`, `replay-chat`, `analyze` and `parse` also switch to JSON whenever the session is not an interactive terminal — the check requires both stdin and stdout to be TTYs — so piping them gives you JSON even without the flag. `investigate`, `audit`, `insights` and `doctor` stay text when piped. `inspect` formats by `--json` alone.
 </Warning>
 
 `--output-file` creates parent directories and changes what is printed. In JSON mode it writes the payload and prints `{"ok": true, "outputFile": "<abs>", "format": "json", "bytes": <n>, "sha256": "<hex>"}`. In text mode it writes the text and prints `wrote <abs path>`.
@@ -288,7 +283,7 @@ These four load `.receipt/config.json` and use its `dataDir`; `--data-dir` does 
 receipt factory resume <objective-id> [--json]
 ```
 
-Missing id: `factory resume requires <objective-id>`. It reacts to the objective and then attaches exactly like `run`, with the same exit codes.
+Missing id: `factory resume requires <objective-id>`. It reacts to the objective and then attaches like `run`, with the same exit codes. One difference matters if you are scripting: `run --json` stays silent while it waits, but `resume --json` keeps printing progress lines before the closing JSON snapshot, so read its output as a stream rather than as one JSON document.
 
 <Warning>
 **Resume does not revive the old objective.** Reacting at a continuation boundary creates a **brand-new objective with a fresh id**. The default continuation message is `Retry the objective from its last durable state. Reuse verified prior evidence, but create fresh task, candidate, and job authority instead of reviving superseded execution ids.` The CLI re-reads the new id before it starts waiting, so the id you watch afterwards is not the id you passed.
@@ -311,7 +306,7 @@ Missing id: `factory resume requires <objective-id>`. It reacts to the objective
 - `cleanup` cancels objective-scoped jobs with the reason `factory objective cleanup` and removes task worktrees and runtime workspaces.
 - `archive` cancels jobs with the reason `factory objective archived`, emits an archive receipt if one is not already there, and rebalances slots.
 
-Every one of these runs inside an optimistic-concurrency retry — four attempts with 25, 50 and 75 ms backoff — that recognises the `Expected prev hash …` and `… advanced before applying a mutation` conflicts. Each also asserts the action against the profile's allowed dispatch actions first.
+Every one of these runs inside an optimistic-concurrency retry — four attempts with 25, 50 and 75 ms backoff — that recognises the `Expected prev hash …` and `… advanced before applying a mutation` conflicts. Each one except `note` also asserts the action against the profile's allowed dispatch actions first; a `compose` that continues an existing objective asserts `react`.
 
 Text mode prints one line per mutation, `<action> <objectiveId>`, with two exceptions: `note` prints `noted <objectiveId>`, and a `compose` that carried a note prints `reacted <objectiveId>`. The JSON form is:
 
@@ -393,12 +388,12 @@ The `code` takes one of two forms: `FACTORY_SERVICE_<httpStatus>` when the under
 | Action | Notes |
 | --- | --- |
 | `agent board` (alias `list`) | `data` carries the compose model, the board, the selection, the live view and the active streams per objective. |
-| `agent start` (alias `create`) | Missing prompt: `factory agent start requires --prompt or trailing prompt text`. With `--wait` the `data` also carries `terminal` and `snapshot`, and the process exit code comes from the terminal result. Unlike `create`, it always passes `computerProvider` through. |
+| `agent start` (alias `create`) | Missing prompt: `factory agent start requires --prompt or trailing prompt text`. With `--wait` the `data` also carries `terminal` and `snapshot`, and the process exit code comes from the terminal result. Unlike `compose`, it passes `computerProvider` through. |
 | `agent inspect <objectiveId>` | Accepts `--panel`. Missing target: `factory agent inspect requires <objectiveId>`. |
 | `agent output` (aliases `stdio`, `logs`) | Takes an objective, task or job id, or falls back to the selected objective. Returns prompt, stdout, stderr and last-message tails with their paths; the prompt tail is the last 1200 characters, prefixed with `...` when truncated. No match: 404 `No Factory task stream found for <id>`. No id and no selection: 404 `No selected objective; pass an objective id, task id, or job id` |
 | `agent investigate` | The same report as `receipt factory investigate --json`, but always from the config's `dataDir` and `repoRoot`. |
 | `agent context` (alias `probe-context`) | Returns the packet context, the contract (`acceptanceCriteria`, `requiredChecks`, `proofExpectation`), memory, selected helpers, profile skills, recent receipts and frontier tasks. Every packet path becomes an artifact reference. |
-| `agent steer` / `agent follow-up` | Missing message: `factory agent steer requires --message or trailing message text`. An objective id is resolved to its active job; with none: 409 `selected objective has no active job to control`. With no target at all: `factory agent control requires <jobId|objectiveId> or --job/--objective` |
+| `agent steer` / `agent follow-up` | Missing message: `factory agent steer requires --message or trailing message text`. An objective id is resolved to its active job; with none: 409 `selected objective has no active job to control`. With no target at all: `factory agent control requires <jobId\|objectiveId> or --job/--objective` |
 | `agent react` / `agent resume` | Missing target: `factory agent react requires <objectiveId>`. As above, a resume can return a **new** objective id. |
 | `agent help` | Thirteen `{command, description}` pairs, four of which are `agent start` variants. |
 
@@ -431,7 +426,7 @@ receipt factory agent computer <subaction> [<objectiveId>] [flags]
 | `download` | `--remote <path>`, `--local <path>` | `computer download requires --remote <path> --local <path>` |
 | anything else | — | `computer action must be status, probe, exec, read, write, upload, or download` |
 
-Every computer envelope reports its `source` as either `existing-lease` or `acquired-lease`, which is the distinction that matters:
+Every subaction that needs a lease — everything except `status` and `inspect` — reports its `source` as either `existing-lease` or `acquired-lease`, which is the distinction that matters:
 
 <Warning>
 **Leases are not created for you.** If the objective already has a recorded lease, the CLI reconnects to it. If it does not, and you did not pass `--acquire`, the command fails with a 409 and this exact message:
@@ -445,7 +440,7 @@ An `exec` result is `{exitCode, signal?, stdout, stderr}`, where `exitCode` can 
 
 ## The interactive board
 
-Bare `receipt` in an interactive terminal — no arguments — opens the Factory board, as do `receipt factory` and `receipt factory board`. With `--json`, or when stdout is not a terminal, they print a snapshot instead of opening the UI: JSON as `{compose, board, selected?, live?}`, or text under the section headers `== Repo ==`, `== Needs Attention ==`, `== Active ==`, `== Queued ==`, `== Completed ==`, `== Archived ==`, `== Selected Objective ==` and `== Live Tasks ==`.
+Bare `receipt` in an interactive terminal — no arguments — opens the Factory board, as do `receipt factory` and `receipt factory board`. Bare `receipt` passes no flags through, so off an interactive terminal it prints the CLI usage rather than a board. `receipt factory` and `receipt factory board` do respond to the flags: with `--json`, or when the session is not an interactive terminal, they print a snapshot instead of opening the UI: JSON as `{compose, board, selected?, live?}`, or text under the section headers `== Repo ==`, `== Needs Attention ==`, `== Active ==`, `== Queued ==`, `== Completed ==`, `== Archived ==`, `== Selected Objective ==` and `== Live Tasks ==`.
 
 <Note>
 The board's compose panel is not derived from your repository. Its profile summary is always `Using checked-in Factory profiles and skills only.`, its validation commands are always `["bun run build"]`, and its policy is always the built-in default.
@@ -499,8 +494,8 @@ Plain text with no objective selected creates a new objective; with one selected
 
 ## Commands this page does not cover
 
-`receipt factory simulate` and `receipt factory experiment` are engineering harnesses rather than product surface; the simulator is documented in [Testing, simulation, and stack validation](/cli/from-source/testing-and-simulation). `receipt factory helper list|run` drives a Python helper catalog and needs `python3` on `PATH`.
+`receipt factory simulate` and `receipt factory experiment` are engineering harnesses rather than product surface; the simulator is documented in [Testing, simulation, and stack validation](/cli/from-source/testing-and-simulation). `receipt factory helper list` reads the checked-in helper manifests, and `receipt factory helper run` executes one through the profile's Python runner, so `run` needs `python3` on `PATH`.
 
-Note that the global usage text is incomplete: the subcommand list it prints omits `agent`, `board`, `doctor`, `simulate` and `helper`, and there is no per-subcommand help for `run`, `create`, `compose`, `watch`, `inspect`, `resume`, the mutations, the job controls, `board`, `helper` or `init` — asking for `receipt factory run --help` prints the whole default usage instead.
+Note that the usage text is incomplete. The one-line subcommand list — `receipt factory [init|run|create|…]` — omits `agent`, `board`, `doctor`, `simulate` and `helper`; the longer Factory block printed underneath adds `agent`, `doctor` and `simulate` back, but `board` and `helper` appear nowhere. There is also no per-subcommand help for `run`, `create`, `compose`, `watch`, `inspect`, `resume`, the mutations, the job controls, `board`, `helper` or `init` — asking for `receipt factory run --help` prints the whole default usage instead.
 
-Next step: [Run the simulator and the stack checks](/cli/from-source/testing-and-simulation) before you rely on a Factory change.
+Next step: [run the simulator and the stack checks](/cli/from-source/testing-and-simulation).

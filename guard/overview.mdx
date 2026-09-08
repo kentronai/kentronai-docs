@@ -3,7 +3,9 @@ title: "What Guard enforces"
 description: "The controls that sit between an agent and your systems, which of them act on every request today, and which only record your intent."
 ---
 
-Guard is where you set the limits an agent works inside: which models it may call, which operations on a connected app it may run, who may change those settings, and what evidence is left behind. This page names every control, says where it acts, and marks the ones that are still configuration rather than enforcement.
+Kentron Guard is where you set the limits an agent works inside: which models it may call, which operations on a connected app it may run, who may change those settings, and what evidence is left behind. It is not one screen in the app — the controls sit in organization settings (**Guardrails**, **Policies**, **Security**), in each MCP Gateway connection's permissions, and in the runtime itself. This page names every control, says where it acts, and marks the ones that are still configuration rather than enforcement.
+
+New to Kentron? Start with [What Kentron is](/introduction).
 
 <Warning>
 **Several Guard screens store settings that nothing reads yet.** [Guardrail groups](/guard/guardrails) and four of the five modules on the [Policies](/guard/policies) page — rate limiting, budget limiting, logging config and tool approval — are authored, versioned and audited, but no runtime path evaluates them against live traffic. Only the controls marked **Enforced** below change what a request may do.
@@ -12,22 +14,22 @@ Guard is where you set the limits an agent works inside: which models it may cal
 ## What Guard covers
 
 <CardGroup cols={2}>
-  <Card title="Guardrails" icon="shield" href="/guard/guardrails">The nine kinds, and why nothing enforces them yet.</Card>
-  <Card title="Policies" icon="sliders" href="/guard/policies">The five modules and the receipts behind each rule.</Card>
-  <Card title="Access control" icon="user-lock" href="/guard/access-control">Roles, the settings rule, workspace authority.</Card>
-  <Card title="Receipts and audit" icon="file-shield" href="/guard/receipts-and-audit">What writes a receipt, and what leaves no trace.</Card>
-  <Card title="Data handling" icon="lock" href="/guard/data-handling-and-security">Where credentials live and what is encrypted.</Card>
+  <Card title="Guardrail groups" icon="shield" href="/guard/guardrails">The nine kinds, how a group is authored and tested, and why nothing enforces them yet.</Card>
+  <Card title="Organization policies" icon="sliders" href="/guard/policies">The five modules, what each rule holds, and the receipts behind every change.</Card>
+  <Card title="Access control" icon="user-lock" href="/guard/access-control">The three roles, the settings gate and its one exception, and workspace authority.</Card>
+  <Card title="Receipts and audit" icon="file-shield" href="/guard/receipts-and-audit">What writes a receipt, what leaves no trace, and how the hash chain is checked.</Card>
+  <Card title="Data handling and security" icon="lock" href="/guard/data-handling-and-security">Where credentials live, what is encrypted, and what telemetry leaves the deployment.</Card>
 </CardGroup>
 
 ## The gates a request passes
 
 ### Model and compliance policy
 
-Every chat request resolves its model through one server-side checkpoint before a provider is contacted: disabled providers, disabled models and **Require ZDR (Zero Data Retention)** are decided there, and when an organization turns on **Enforce Study Mode** the same checkpoint pins the model whatever the request asked for. A denial is HTTP 403 with a machine reason — `policy_denied:provider`, `policy_denied:model` or `policy_denied:compliance`, joined by commas when more than one applies — and the person in chat sees **"The selected AI model is not allowed for your organization."** **Require ZDR** and **Enforce Study Mode** act on every request even though the settings screen that carries their toggles has no navigation entry and is opened by URL. [Model policy](/llm-gateway/model-policy) covers each flag, including how saving an organization OpenAI or Anthropic key turns ZDR enforcement off for models routed through it.
+Every chat request resolves its model through one server-side checkpoint before a provider is contacted: disabled providers, disabled models and **Require ZDR (Zero Data Retention)** are decided there, and when an organization turns on **Enforce Study Mode** the same checkpoint pins the model whatever the request asked for. A denial is HTTP 403 with a machine reason — `policy_denied:provider`, `policy_denied:model` or `policy_denied:compliance`, joined by commas when more than one applies — and the person in chat sees **"The selected AI model is not allowed for your organization."** **Require ZDR** and **Enforce Study Mode** act on every request even though the settings screen that carries their toggles has no navigation entry and is opened by URL. Enforcement is not the same as a working outcome: Study Mode pins `openai/gpt-oss-120b`, a model no route in this release can execute, so a turn sent under it fails instead of answering. [Model policy](/llm-gateway/model-policy) covers each flag, that failure, and how saving an organization OpenAI or Anthropic key turns ZDR enforcement off for models routed through it.
 
 ### Scopes and allowlists at the gateway
 
-A tool call has to come from a workspace you belong to — anything else is HTTP 403, `workspace_membership_required` — and then clears two more checks: the action must be enabled in that connection's policy, and a write also needs `connect:write` on the calling token. A disabled action and one that does not exist return the same 404, `integration action not found or disabled`, so a tool you have not enabled cannot be probed; a write to an enabled action without the scope returns 400, `integration action '<tool>' requires connect:write`. GitHub connections add a further check when selected repositories are enforced. See [tools and permissions](/mcp-gateway/tools-and-permissions).
+A tool call has to come from a [workspace](/mcp-gateway/workspaces) you belong to — a workspace is the boundary that holds a set of connected accounts and the permissions on them — and anything else is HTTP 403, `workspace_membership_required`. It then clears two more checks: the action must be enabled in that connection's policy, and a write also needs the `connect:write` scope on the token the caller is using. A disabled action and one that does not exist return the same 404, `integration action not found or disabled`, so a tool you have not enabled cannot be probed; a write to an enabled action without the scope returns 400, `integration action '<tool>' requires connect:write`. GitHub connections add a further check when selected repositories are enforced. See [tools and permissions](/mcp-gateway/tools-and-permissions).
 
 ### Who may change a control
 
@@ -57,7 +59,7 @@ flowchart TB
   H -. "REST calls only" .-> R
 ```
 
-The dotted edge is the gap worth knowing: a REST gateway call writes `tool.called` and, when it succeeds, `tool.observed`. A tool call made over the MCP protocol passes the same membership, scope and allowlist checks, but is not recorded.
+The dotted edge is the gap worth knowing: a call to the gateway's REST route, `POST /connect/call`, writes `tool.called` and, when it succeeds, `tool.observed`. The same tool called over the MCP endpoint, `POST /connect/mcp` — the one an MCP client such as Codex is pointed at — passes the same membership, scope and allowlist checks, but is not recorded.
 
 ## The enforcement matrix
 
@@ -65,8 +67,8 @@ The dotted edge is the gap worth knowing: a REST gateway call writes `tool.calle
 |---|---|---|
 | Disabled providers and models | Every chat request | **Enforced** |
 | Require ZDR (Zero Data Retention) | Every chat request | **Enforced**; an organization OpenAI or Anthropic key bypasses it for models routed through that provider |
-| Enforce Study Mode | Every chat request | **Enforced**; pins one model |
-| `CHAT_REQUIRE_BYOK` | Every chat request | **Enforced**; an operator setting, not a toggle |
+| Enforce Study Mode | Every chat request | **Enforced**; pins `openai/gpt-oss-120b`, which no route in this release can execute, so the turn fails rather than answers |
+| `CHAT_REQUIRE_BYOK` | Every chat request | **Enforced**; an operator environment setting rather than a toggle — with it on, a request with no organization or workspace provider key behind it is refused instead of falling back to platform credit |
 | Per-user request limit | Every chat request | **Enforced**; 30 a minute by default, off when `VITE_DISABLE_REDIS=true` |
 | Pre-authorized dollar budgets | Before each metered model call | **Enforced**; a call that runs on your own provider key is not reserved against |
 | Per-connection action allowlist | Every gateway tool call | **Enforced** |
@@ -78,8 +80,9 @@ The dotted edge is the gap worth knowing: a REST gateway call writes `tool.calle
 | Receipt hash chain | Every append and replay | **Enforced** |
 | Guardrail groups | — | Configured only: authoring and testing |
 | Policies page modules | — | Configured only: stored, read by nothing |
-| Require organization provider key | Chat model picker | Filters the picker; not checked on the server |
-| Plan entitlements | — | Always allowed |
+| Organization tool switches | — | Configured only: resolved and recorded on every turn, but a direct answer is sent with no provider tools attached |
+| Require organization provider key | Chat model list, in the browser | Filters that list client-side; the server checks only ZDR, and the picker the list feeds is not mounted in this release |
+| Plan feature entitlements | — | Always allowed; a plan still sets seat capacity, the metered usage budget and the signup credit ([billing and plans](/core/billing-and-plans)) |
 | Domains, Single Sign-On, Directory Provisioning | — | Placeholder screens |
 
 ## Saying it accurately

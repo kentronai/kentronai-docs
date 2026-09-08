@@ -3,7 +3,9 @@ title: "Observing and importing Claude Code activity"
 description: "Capture Claude Code sessions into Receipt with import and observe, and know exactly what gets captured and where it goes."
 ---
 
-`receipt import` reads a log of Claude Code activity once. `receipt observe` does the same thing and keeps following the file. Both turn each line into receipts, which land on the Sessions page as replayable runs.
+Claude Code is Anthropic's terminal coding agent. These two commands take the work you did in it and record that work in Receipt, so a session you ran in your own terminal becomes a replayable run beside the ones Receipt did itself.
+
+`receipt import` reads a log of Claude Code activity once. `receipt observe` does the same thing and keeps following the file. Both turn each line into receipts. The ones that are uploaded land on the Sessions page as replayable runs; a local-only import stays on your machine and never appears there.
 
 Read the warning on this page before you run either command against real work.
 
@@ -23,19 +25,19 @@ Receipt's own repository documentation claims the opposite. The code and its tes
 
 ## The two sources
 
-Exactly two sources exist, and both work:
+A *source* is where the record of the session comes from. `clauden` is a companion proxy that sits in front of Claude Code and writes its own event log; `claude-code` reads the transcript files Claude Code writes for itself. Both sources are implemented, but only the second needs nothing extra: the current release does not ship the companion binary, so `clauden` works only if you supply one (see [`receipt setup` and the observer](#receipt-setup-and-the-observer)).
 
 | Source | What it reads | Default path |
 | --- | --- | --- |
 | `clauden` | The companion proxy's NDJSON event log | `~/.claudeN/events.ndjson` |
 | `claude-code` | Raw Claude Code transcripts | `~/.claude/projects` |
 
-For `clauden`, when the resolved companion binary is named `clauden` the default becomes the legacy text log `~/.claudeN/clauden.log`.
+For `clauden`, the default becomes the legacy text log `~/.claudeN/clauden.log` only when you also launch the companion and the resolved binary is named `clauden`. Without `--launch`, the default is always `~/.claudeN/events.ndjson`.
 
-For `claude-code`, Receipt scans `~/.claude/projects` and takes the newest `.jsonl` file by modification time, falling back to `~/.claude/projects/latest.jsonl` when it finds none. The stream project name comes from the parent directory, and the source id is the `.jsonl` basename, which is the session UUID.
+For `claude-code`, Receipt scans `~/.claude/projects` and takes the newest `.jsonl` file by modification time, falling back to `~/.claude/projects/latest.jsonl` when it finds none. The stream project name comes from the parent directory, and the source id is the file name with `.jsonl` stripped, which is the session UUID.
 
 <Note>
-`claude-code` appears in **no help text**. `receipt --help` and the usage strings list only `clauden`. The source is fully implemented and validated — it is simply reachable only by typing it.
+`claude-code` appears in **no help text**. `receipt --help` and the usage strings list only `clauden`. The source is fully implemented and validated — it is only reachable by typing it.
 </Note>
 
 Omitting the source, or naming another one, fails with the same message either way:
@@ -69,7 +71,8 @@ receipt observe claude-code
 | `--follow` | off on `import`, always on for `observe` | Keep reading as the file grows |
 | `--poll-ms <n>` | `1000` | Follow poll interval, floored at 100 |
 | `--launch`, `--launch-proxy` | off | Spawn the companion proxy. Requires `--follow` or `observe` |
-| `--proxy-bin <path>`, `--clauden-bin <path>`, `--port <n>`, `--no-launch` | resolved | Companion binary and the arguments it is launched with |
+| `--proxy-bin <path>`, `--clauden-bin <path>` | resolved | Which companion binary to launch |
+| `--port <n>`, `--no-launch` | — | Passed through to the companion; they do nothing without `--launch` |
 | `--batch-size <n>` | `50` | Receipts per upload request, maximum 100 |
 | `--local-only`, `--no-cloud`, `--no-upload` | off | Do not upload; keep receipts on this machine |
 | `--target <name>` | active session | Which saved CLI session to upload with |
@@ -112,13 +115,17 @@ Any of `--local-only`, `--no-cloud` or `--no-upload` disables the cloud path, so
 `ZERO_UPSTREAM_DB` is read on this path but has no effect. The released binary always forces the local store, so the third destination you may see referenced, `storage: "postgres"`, is unreachable from it — only the [developer CLI built from source](/cli/from-source/overview) can produce it.
 </Note>
 
-Uploads go to `<gatewayUrl>/api/receipt-ingest/receipts` with your session bearer token, which must carry `connect:write`. The endpoint caps a request at 2 MiB and 100 receipts, and accepts only the `imports/clauden/` and `imports/claude-code/` stream prefixes — a custom `--stream` outside those prefixes will be rejected.
+Uploads go to `<gatewayUrl>/api/receipt-ingest/receipts` with your session bearer token, which must carry `connect:write`. The endpoint caps a request at 2 MiB and 100 receipts, and accepts only the `imports/clauden/` and `imports/claude-code/` stream prefixes. A custom `--stream` outside those prefixes is rejected:
+
+```
+Receipt cloud ingest failed for <gatewayUrl>/api/receipt-ingest/receipts: unsupported_stream
+```
 
 ## What is captured
 
 Each transcript line produces two receipts: `import.raw_object.captured` for the raw object and `import.object.normalized` for the normalized one, or `import.object.rejected` when the line cannot be parsed. The run is bracketed by `import.batch.started` and `import.batch.completed`. Duplicates are collapsed on an event id built from the source, source id, object id and event type.
 
-The normalized receipt carries the model, stream, status, session key, request and response byte counts, rate-limit and cooldown state, method and path, `cwd`, `gitBranch`, entrypoint, user type, prompt and request ids, version, stop reason, any error, and a `timeline`.
+The normalized receipt carries the model, whether the call was streamed, the HTTP status, the session key, request and response byte counts, rate-limit and cooldown state, method and path, `cwd`, `gitBranch`, entrypoint, user type, prompt and request ids, version, stop reason, any error, and a `timeline`.
 
 The timeline is the part that matters for the warning above. Each entry has a role — user, assistant, system, tool use, tool result, attachment, metadata or error — plus its text, content, token usage, tool name, tool result, and metadata including the last prompt and the permission mode.
 
@@ -182,20 +189,20 @@ The service runs that command and nothing else, so it uploads to the cloud store
 The service label and unit filename use the string `beetle`, not `receipt`; Beetle is the assistant's name in the interface. Search for that string when you are looking for the service on disk.
 </Note>
 
-### `receipt setup` installs the observer
+### `receipt setup` and the observer
 
 [`receipt setup`](/cli/setup) installs this background observer as part of signing you in. Decline it with `--no-observer` (also spelled `--no-claude`, `--no-background` or `--skip-claude`).
 
-If the companion binary cannot be found, setup reports the observer as **skipped** with the resolution error rather than failing the sign-in:
+The install only happens when the companion binary is on the machine, and the current release archive does not contain one, so on a stock install the step reports itself as not installed with the resolution error rather than failing the sign-in:
 
 ```
-Unable to find the Claude observer companion binary. Install a Receipt CLI release that bundles receipt-claude-proxy, or pass --proxy-bin <path> / set RECEIPT_CLAUDE_PROXY_BIN.
+Claude observer: not installed (Unable to find the Claude observer companion binary. Install a Receipt CLI release that bundles receipt-claude-proxy, or pass --proxy-bin <path> / set RECEIPT_CLAUDE_PROXY_BIN.)
 ```
 
-The CLI looks for the companion in order: `--proxy-bin`, `--clauden-bin`, `RECEIPT_CLAUDE_PROXY_BIN`, `CLAUDEN_BIN`, then `receipt-claude-proxy` and `clauden` next to the CLI entrypoint, next to the executable, and finally on `PATH`.
+The CLI looks for the companion in order: `--proxy-bin`, `--clauden-bin`, `RECEIPT_CLAUDE_PROXY_BIN`, `CLAUDEN_BIN`, then `receipt-claude-proxy` next to the CLI entrypoint and next to the executable, then `clauden` in those same two places, and finally `receipt-claude-proxy` and then `clauden` on `PATH`.
 
 ## Seeing what you imported
 
-Imported runs appear at `/sessions`. That page is not in the sidebar — it is reachable by direct URL only. With nothing imported it reads `No imported sessions yet`.
+Uploaded runs appear at `/sessions`, which reads exactly the two stream prefixes the ingest endpoint accepts. That page is not in the sidebar — it is reachable by direct URL only. With nothing imported it reads `No imported sessions yet`. A `--local-only` import never reaches it.
 
 Next step: [look up every command, flag and exit code](/cli/command-reference).

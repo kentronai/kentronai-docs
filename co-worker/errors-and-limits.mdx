@@ -83,7 +83,7 @@ Two more strings for the same kinds of failure are written by the server rather 
 
 ## Routing and background runs
 
-When a turn needs a background run, a failure arrives as an assistant message in the thread rather than a banner — the last row below is the one exception. Beetle, in these messages, is the assistant's name in the interface. [Background runs](/co-worker/background-runs) explains each situation and how to recover; the strings are repeated here so you can find them.
+When a turn needs a background run, a failure arrives as an assistant message in the thread rather than a banner — the last row below is the one exception. [Beetle](/introduction), in these messages, is the interface's name for the assistant. [Background runs](/co-worker/background-runs) explains each situation and how to recover; the strings are repeated here so you can find them.
 
 | Message | Meaning | What to do |
 |---|---|---|
@@ -94,7 +94,7 @@ When a turn needs a background run, a failure arrives as an assistant message in
 | `I cannot confirm {Provider} is connected right now because Receipt Connect status could not be checked.` | Receipt couldn't reach the connection status service, so it can't tell whether the app is connected. | Retry. If it persists, check the Integrations page. |
 | `{Provider} is connected in Global Integrations, but you don't have access to any enabled {Provider} tools right now.` | The app is connected, but no tool is enabled on it. | An owner or admin enables the tool under **Manage tools**. See [Tools and permissions](/mcp-gateway/tools-and-permissions). |
 | `This task is stopped.` | You pressed **Stop generation**; the run and its jobs were cancelled. | Nothing. |
-| `Stopped the response, but could not cancel the agent run.` | The stream closed, but the cancel request to the runtime failed. This one appears in the banner, not in the thread, and a runtime that returned its own error message shows that message instead. | Cancel the run from the [Tasks page](/co-worker/objectives-and-tasks), where the confirmation reads **Cancel task**. |
+| `Stopped the response, but could not cancel the agent run.` | The stream closed, but the cancel request to the runtime failed. This one appears in the banner, not in the thread, and a runtime that returned its own error message shows that message instead. | Press **Stop generation** again; if the response is no longer streaming, delete the thread from the sidebar, which also stops the tasks it started. |
 
 The routing message reads the same everywhere, but reaches you differently by channel. On the web it is the `Reason:` line of the `Beetle stopped before completing this response.` block. In [Slack](/co-worker/slack) it is posted as a threaded reply that starts with a mention of you, and the refusal is recorded as a `slack.thread.routing_failed` receipt. [Teams](/co-worker/teams) is the exception: it does not refuse, and starts a background run anyway.
 
